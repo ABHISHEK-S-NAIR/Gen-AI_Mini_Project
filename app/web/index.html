@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PaperMind Control Deck</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/web/style.css" />
+</head>
+<body>
+  <div class="bg-grid"></div>
+  <header class="topbar">
+    <h1>PaperMind</h1>
+    <p>Multi-Document Research Analysis Console</p>
+  </header>
+
+  <main class="layout">
+    <section class="card card-upload">
+      <h2>Upload Papers</h2>
+      <form id="upload-form">
+        <input id="pdf-files" type="file" accept="application/pdf" multiple required />
+        <button type="submit">Ingest PDFs</button>
+      </form>
+      <p id="upload-status" class="status"></p>
+    </section>
+
+    <section class="card card-papers">
+      <div class="panel-title-row">
+        <h2>Ingested Papers</h2>
+        <button id="refresh-papers" type="button" class="secondary">Refresh</button>
+      </div>
+      <ul id="papers-list" class="papers-list"></ul>
+    </section>
+
+    <section class="card card-task">
+      <h2>Run Task</h2>
+      <form id="task-form">
+        <label>
+          Task
+          <select id="task-type" required>
+            <option value="analyse">analyse</option>
+            <option value="review">review</option>
+            <option value="citations">citations</option>
+            <option value="ask">ask</option>
+            <option value="explain">explain</option>
+          </select>
+        </label>
+
+        <div id="query-group">
+          <label>
+            Query / Question (for ask)
+            <textarea id="task-query" rows="4" placeholder="Ask a question about your papers"></textarea>
+          </label>
+        </div>
+
+        <div id="level-group">
+          <label>
+            Explanation Level (for explain)
+            <select id="task-level">
+              <option value="beginner">beginner</option>
+              <option value="intermediate">intermediate</option>
+              <option value="expert">expert</option>
+              <option value="visual">visual</option>
+            </select>
+          </label>
+        </div>
+
+        <button type="submit">Execute Task</button>
+      </form>
+      <p id="task-status" class="status"></p>
+    </section>
+
+    <section class="card card-output">
+      <h2>Output</h2>
+      <div id="result-readable" class="result-readable">No results yet.</div>
+      <details class="raw-details">
+        <summary>Show raw JSON</summary>
+        <pre id="result-json">No results yet.</pre>
+      </details>
+    </section>
+  </main>
+
+  <script src="/web/app.js"></script>
+</body>
+</html>
