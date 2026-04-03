@@ -63,5 +63,8 @@ async def ingest_files(files: list[UploadFile]) -> dict[str, object]:
         abstract_text = sections.get("abstract", "")
         paper_seed = abstract_text if abstract_text.strip() else raw_text[:3000]
         state.paper_embeddings[paper_id] = embed_texts([paper_seed], settings.embedding_dim)[0]
+        
+        # Auto-select newly ingested papers
+        state.selected_papers.add(paper_id)
 
     return {"papers": [p.model_dump() for p in ingested]}

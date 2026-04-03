@@ -139,9 +139,65 @@ button.secondary {
 
 .papers-list {
   margin: 0;
-  padding-left: 18px;
+  padding-left: 0;
+  list-style: none;
   display: grid;
   gap: 6px;
+}
+
+.paper-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  border-radius: 6px;
+  transition: background-color 150ms ease;
+}
+
+.paper-item:hover {
+  background-color: rgba(10, 127, 89, 0.05);
+}
+
+.paper-checkbox {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.paper-item label {
+  cursor: pointer;
+  flex-grow: 1;
+  margin: 0;
+}
+
+.papers-selection-info {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  background: rgba(10, 127, 89, 0.08);
+  border-radius: 8px;
+  border: 1px solid rgba(10, 127, 89, 0.2);
+}
+
+.papers-selection-info span {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.papers-selection-info div {
+  display: flex;
+  gap: 6px;
+}
+
+.papers-selection-info button {
+  padding: 6px 10px;
+  font-size: 0.8rem;
+  box-shadow: 2px 2px 0 var(--line);
 }
 
 #result-json {

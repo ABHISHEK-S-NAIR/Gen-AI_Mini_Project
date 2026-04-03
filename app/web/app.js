@@ -197,18 +197,88 @@ async function refreshPapers() {
       const li = document.createElement("li");
       li.textContent = "No papers ingested yet.";
       list.appendChild(li);
+      updateSelectionCount(0);
       return;
     }
 
     for (const paper of papers) {
       const li = document.createElement("li");
-      li.textContent = paper.filename;
+      li.className = "paper-item";
+      
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.id = `paper-${paper.paper_id}`;
+      checkbox.className = "paper-checkbox";
+      checkbox.checked = paper.selected;
+      checkbox.dataset.paperId = paper.paper_id;
+      checkbox.addEventListener("change", onPaperSelectionChange);
+      
+      const label = document.createElement("label");
+      label.htmlFor = `paper-${paper.paper_id}`;
+      label.textContent = paper.filename;
+      
+      li.appendChild(checkbox);
+      li.appendChild(label);
       list.appendChild(li);
     }
+    
+    updateSelectionCount(papers.filter(p => p.selected).length);
   } catch (err) {
     const li = document.createElement("li");
     li.textContent = `Failed to fetch papers: ${String(err.message || err)}`;
     list.appendChild(li);
+  }
+}
+
+function updateSelectionCount(count) {
+  const countEl = document.getElementById("selection-count");
+  countEl.textContent = `${count} selected`;
+}
+
+async function onPaperSelectionChange() {
+  const checkboxes = document.querySelectorAll(".paper-checkbox");
+  const selectedIds = Array.from(checkboxes)
+    .filter(cb => cb.checked)
+    .map(cb => cb.dataset.paperId);
+  
+  try {
+    const result = await fetchJson("/papers/select", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paper_ids: selectedIds }),
+    });
+    updateSelectionCount(result.selected_count);
+  } catch (err) {
+    console.error("Failed to update selection:", err);
+  }
+}
+
+async function selectAllPapers() {
+  const checkboxes = document.querySelectorAll(".paper-checkbox");
+  const allIds = Array.from(checkboxes).map(cb => cb.dataset.paperId);
+  
+  try {
+    const result = await fetchJson("/papers/select", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paper_ids: allIds }),
+    });
+    await refreshPapers();
+  } catch (err) {
+    console.error("Failed to select all:", err);
+  }
+}
+
+async function deselectAllPapers() {
+  try {
+    const result = await fetchJson("/papers/select", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paper_ids: [] }),
+    });
+    await refreshPapers();
+  } catch (err) {
+    console.error("Failed to deselect all:", err);
   }
 }
 
@@ -273,6 +343,8 @@ window.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("upload-form").addEventListener("submit", onUploadSubmit);
   document.getElementById("task-form").addEventListener("submit", onTaskSubmit);
   document.getElementById("refresh-papers").addEventListener("click", refreshPapers);
+  document.getElementById("select-all-papers").addEventListener("click", selectAllPapers);
+  document.getElementById("deselect-all-papers").addEventListener("click", deselectAllPapers);
   document.getElementById("task-type").addEventListener("change", updateTaskInputs);
   updateTaskInputs();
   await refreshPapers();

@@ -9,6 +9,7 @@ class AppState:
         self.chunks: dict[str, list[Chunk]] = {}
         self.paper_embeddings: dict[str, list[float]] = {}
         self.vdb = InMemoryVectorDB()
+        self.selected_papers: set[str] = set()  # Track selected paper IDs
 
     def clear(self) -> None:
         self.papers.clear()
@@ -16,6 +17,7 @@ class AppState:
         self.chunks.clear()
         self.paper_embeddings.clear()
         self.vdb = InMemoryVectorDB()
+        self.selected_papers.clear()
 
 
 state = AppState()
