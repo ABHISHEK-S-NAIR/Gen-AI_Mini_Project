@@ -45,9 +45,42 @@ def _non_background_sentence(text: str) -> str:
     return _sentences(text)[0] if _sentences(text) else ""
 
 
-def _find_metric(text: str) -> str:
-    m = re.search(r"\b\d+(?:\.\d+)?\s*(?:%|BLEU|ROUGE|F1|accuracy|EM)\b", text, re.IGNORECASE)
-    return m.group(0) if m else "no explicit metric"
+def _find_metrics(text: str) -> list[str]:
+    """Extract all metrics from text."""
+    pattern = r"\b\d+(?:\.\d+)?\s*(?:%|BLEU|ROUGE|F1|accuracy|EM|precision|recall|mAP|perplexity|loss)\b"
+    matches = re.findall(pattern, text, re.IGNORECASE)
+    return matches if matches else []
+
+
+def _find_datasets(text: str) -> list[str]:
+    """Detect common datasets mentioned in the paper."""
+    datasets = [
+        "ImageNet", "COCO", "SQuAD", "GLUE", "SuperGLUE", "MNIST", "CIFAR-10", "CIFAR-100",
+        "Pascal VOC", "ADE20K", "MS MARCO", "WikiText", "Penn Treebank", "WMT",
+        "LibriSpeech", "CommonVoice", "OpenImages", "Visual Genome", "Cityscapes",
+        "KITTI", "NYU Depth", "Places365", "Kinetics", "UCF101", "ActivityNet"
+    ]
+    found = []
+    text_lower = text.lower()
+    for dataset in datasets:
+        if dataset.lower() in text_lower:
+            found.append(dataset)
+    return found
+
+
+def _extract_improvements(text: str) -> list[str]:
+    """Extract performance improvement statements."""
+    improvements = []
+    # Pattern: "improved by X%", "X% improvement", "outperforms by X%"
+    patterns = [
+        r"(?:improved?|improvement|gain|increase).*?by\s+(\d+\.?\d*)\s*%",
+        r"(\d+\.?\d*)\s*%\s+(?:improvement|gain|increase|better)",
+        r"outperforms?.*?by\s+(\d+\.?\d*)\s*%"
+    ]
+    for pattern in patterns:
+        matches = re.findall(pattern, text, re.IGNORECASE)
+        improvements.extend([f"{m}% improvement" for m in matches])
+    return improvements[:3]  # Limit to top 3
 
 
 def _infer_core_technique(text: str) -> str:
@@ -110,7 +143,9 @@ def extract_structured_data(paper_id: str) -> dict[str, str]:
 
     full_text = " ".join([abstract, intro, method, results, conclusion])
     core_technique = _infer_core_technique(full_text)
-    metric = _find_metric(full_text)
+    metrics = _find_metrics(full_text)
+    datasets = _find_datasets(full_text)
+    improvements = _extract_improvements(full_text)
 
     architecture = "transformer-based" if "transformer" in full_text.lower() else "non-transformer neural"
     learning_strategy = "pretraining" if "pre-train" in full_text.lower() or "pretrain" in full_text.lower() else "task-specific training"
@@ -125,7 +160,9 @@ def extract_structured_data(paper_id: str) -> dict[str, str]:
         "results": _phrase(result_src) or "results not clearly extracted",
         "novelty": _phrase(novelty_src) or "novelty not clearly extracted",
         "limitations": _phrase(limitation_src) or "limitations not clearly extracted",
-        "metric": metric,
+        "metrics": metrics,  # Changed from single metric to list
+        "datasets": datasets,  # New field
+        "improvements": improvements,  # New field
         "architecture": architecture,
         "learning_strategy": learning_strategy,
         "contribution_type": contribution_type,
