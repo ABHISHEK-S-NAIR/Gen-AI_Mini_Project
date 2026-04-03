@@ -83,6 +83,178 @@ def _extract_improvements(text: str) -> list[str]:
     return improvements[:3]  # Limit to top 3
 
 
+def _extract_hyperparameters(text: str) -> dict[str, str]:
+    """Extract training hyperparameters from text."""
+    hyperparams = {}
+    
+    # Learning rate patterns
+    lr_patterns = [
+        r"learning[- ]rate[:\s=]+(\d+\.?\d*(?:e-?\d+)?)",
+        r"\blr[:\s=]+(\d+\.?\d*(?:e-?\d+)?)",
+        r"(?:initial|base)\s+(?:learning[- ])?rate[:\s=]+(\d+\.?\d*(?:e-?\d+)?)"
+    ]
+    for pattern in lr_patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            hyperparams["learning_rate"] = match.group(1)
+            break
+    
+    # Batch size patterns
+    batch_patterns = [
+        r"batch[- ]size[:\s=]+(\d+)",
+        r"mini[- ]?batch[:\s=]+(\d+)",
+        r"(\d+)\s+(?:training\s+)?samples?\s+per\s+batch"
+    ]
+    for pattern in batch_patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            hyperparams["batch_size"] = match.group(1)
+            break
+    
+    # Optimizer patterns
+    optimizers = ["Adam", "AdamW", "SGD", "RMSprop", "Adagrad", "Adadelta", "LAMB", "AdaFactor"]
+    for optimizer in optimizers:
+        if re.search(rf"\b{optimizer}\b", text, re.IGNORECASE):
+            hyperparams["optimizer"] = optimizer
+            break
+    
+    # Epochs
+    epoch_patterns = [
+        r"(?:train|trained)\s+for\s+(\d+)\s+epochs?",
+        r"(\d+)\s+epochs?\s+(?:of\s+)?training",
+        r"epochs?[:\s=]+(\d+)"
+    ]
+    for pattern in epoch_patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            hyperparams["epochs"] = match.group(1)
+            break
+    
+    # Dropout rate
+    dropout_pattern = r"dropout[:\s=]+(\d+\.?\d*)"
+    match = re.search(dropout_pattern, text, re.IGNORECASE)
+    if match:
+        hyperparams["dropout"] = match.group(1)
+    
+    # Weight decay
+    wd_patterns = [
+        r"weight[- ]decay[:\s=]+(\d+\.?\d*(?:e-?\d+)?)",
+        r"L2[- ]?regularization[:\s=]+(\d+\.?\d*(?:e-?\d+)?)"
+    ]
+    for pattern in wd_patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            hyperparams["weight_decay"] = match.group(1)
+            break
+    
+    return hyperparams
+
+
+def _extract_model_dimensions(text: str) -> dict[str, str]:
+    """Extract model architecture dimensions."""
+    dimensions = {}
+    
+    # Model size (parameters)
+    param_patterns = [
+        r"(\d+\.?\d*)\s*(?:million|M|billion|B)\s+parameters?",
+        r"parameters?[:\s]+(\d+\.?\d*)\s*(?:million|M|billion|B)",
+        r"model\s+size[:\s]+(\d+\.?\d*)\s*(?:million|M|billion|B)"
+    ]
+    for pattern in param_patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            dimensions["parameters"] = match.group(1) + ("M" if "million" in match.group(0).lower() or "M" in match.group(0) else "B")
+            break
+    
+    # Hidden dimension
+    hidden_patterns = [
+        r"hidden[- ](?:dimension|size|units?)[:\s=]+(\d+)",
+        r"d[_-]?model[:\s=]+(\d+)",
+        r"embedding[- ](?:dimension|size)[:\s=]+(\d+)"
+    ]
+    for pattern in hidden_patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            dimensions["hidden_dim"] = match.group(1)
+            break
+    
+    # Number of layers
+    layer_patterns = [
+        r"(\d+)[- ]layers?",
+        r"(?:number|num)[- ]of[- ]layers?[:\s=]+(\d+)",
+        r"layers?[:\s=]+(\d+)",
+        r"depth[:\s=]+(\d+)"
+    ]
+    for pattern in layer_patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            dimensions["num_layers"] = match.group(1)
+            break
+    
+    # Attention heads
+    head_patterns = [
+        r"(\d+)[- ](?:attention[- ])?heads?",
+        r"heads?[:\s=]+(\d+)",
+        r"multi[- ]head[^.]*?(\d+)[- ]heads?"
+    ]
+    for pattern in head_patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            dimensions["num_heads"] = match.group(1)
+            break
+    
+    # Feed-forward dimension
+    ff_patterns = [
+        r"feed[- ]?forward[^.]*?(\d+)",
+        r"FFN[^.]*?(\d+)",
+        r"d[_-]?ff[:\s=]+(\d+)"
+    ]
+    for pattern in ff_patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            dimensions["ffn_dim"] = match.group(1)
+            break
+    
+    return dimensions
+
+
+def _extract_ablation_studies(text: str) -> list[str]:
+    """Detect and extract ablation study insights."""
+    ablations = []
+    
+    # Look for "ablation" section or mentions
+    if "ablation" not in text.lower():
+        return ablations
+    
+    # Find sentences near "ablation"
+    sentences = _sentences(text)
+    for i, sent in enumerate(sentences):
+        if "ablation" in sent.lower():
+            # Get context around ablation mention (current + next 2 sentences)
+            context_sentences = sentences[i:min(i+3, len(sentences))]
+            
+            # Look for patterns indicating component importance
+            for ctx_sent in context_sentences:
+                lower = ctx_sent.lower()
+                
+                # Pattern: "removing X leads to/causes/results in Y"
+                if any(k in lower for k in ["removing", "without", "ablating"]):
+                    ablations.append(_phrase(ctx_sent, max_words=20))
+                
+                # Pattern: "X contributes Y"
+                elif any(k in lower for k in ["contributes", "contribution", "important", "critical", "essential"]):
+                    ablations.append(_phrase(ctx_sent, max_words=20))
+                
+                # Pattern: mentions drop/decrease/improvement
+                elif any(k in lower for k in ["drop", "decrease", "degrades", "improves", "increase"]) and re.search(r"\d+", ctx_sent):
+                    ablations.append(_phrase(ctx_sent, max_words=20))
+            
+            if len(ablations) >= 3:
+                break
+    
+    return ablations[:3]  # Limit to top 3
+
+
 def _infer_core_technique(text: str) -> str:
     lowered = text.lower()
     rules = [
@@ -146,6 +318,9 @@ def extract_structured_data(paper_id: str) -> dict[str, str]:
     metrics = _find_metrics(full_text)
     datasets = _find_datasets(full_text)
     improvements = _extract_improvements(full_text)
+    hyperparameters = _extract_hyperparameters(full_text)
+    dimensions = _extract_model_dimensions(full_text)
+    ablations = _extract_ablation_studies(full_text)
 
     architecture = "transformer-based" if "transformer" in full_text.lower() else "non-transformer neural"
     learning_strategy = "pretraining" if "pre-train" in full_text.lower() or "pretrain" in full_text.lower() else "task-specific training"
@@ -160,9 +335,12 @@ def extract_structured_data(paper_id: str) -> dict[str, str]:
         "results": _phrase(result_src) or "results not clearly extracted",
         "novelty": _phrase(novelty_src) or "novelty not clearly extracted",
         "limitations": _phrase(limitation_src) or "limitations not clearly extracted",
-        "metrics": metrics,  # Changed from single metric to list
-        "datasets": datasets,  # New field
-        "improvements": improvements,  # New field
+        "metrics": metrics,
+        "datasets": datasets,
+        "improvements": improvements,
+        "hyperparameters": hyperparameters,  # New field
+        "dimensions": dimensions,  # New field
+        "ablations": ablations,  # New field
         "architecture": architecture,
         "learning_strategy": learning_strategy,
         "contribution_type": contribution_type,
