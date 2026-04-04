@@ -2,10 +2,11 @@ from app.services.structured_extraction_service import extract_structured_for_pa
 
 
 def _review_for_item(item: dict[str, str]) -> dict[str, object]:
+    metrics_str = ", ".join(item.get('metrics', [])[:3]) if item.get('metrics') else "no explicit metrics"
     strengths = [
         f"Method articulation is concrete: {item['proposed_method']}",
         f"Core technical lever is identifiable: {item['core_technique']}",
-        f"Result reporting includes measurable signal: {item['metric']}",
+        f"Result reporting includes measurable signal: {metrics_str}",
     ]
 
     weaknesses = [

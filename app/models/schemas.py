@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 SectionName = Literal["abstract", "intro", "method", "results", "conclusion", "other"]
 TaskType = Literal["analyse", "review", "citations", "ask", "explain"]
-ExplainLevel = Literal["beginner", "intermediate", "expert", "visual"]
+ExplainLevel = Literal["beginner", "intermediate", "expert", "visual", "training", "pipeline", "components"]
 
 
 class IngestedPaper(BaseModel):

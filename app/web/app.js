@@ -14,6 +14,25 @@ function setStatus(elId, message, isError = false) {
   el.style.color = isError ? "#b91c1c" : "#0f5132";
 }
 
+function createCollapsibleSection(title, content, defaultOpen = true) {
+  const details = document.createElement("details");
+  details.className = "collapsible-section";
+  if (defaultOpen) details.open = true;
+  
+  const summary = document.createElement("summary");
+  summary.textContent = title;
+  summary.className = "section-header";
+  
+  const contentDiv = document.createElement("pre");
+  contentDiv.className = "section-content";
+  contentDiv.textContent = content;
+  
+  details.appendChild(summary);
+  details.appendChild(contentDiv);
+  
+  return details;
+}
+
 function updateTaskInputs() {
   const task = document.getElementById("task-type").value;
   const queryGroup = document.getElementById("query-group");
@@ -119,9 +138,28 @@ function renderResult(data) {
     const level = payload.level || "unknown";
     const explanation = payload.explanation || "No explanation generated.";
     const diagram = payload.diagram || "";
-    readable.textContent = diagram
-      ? `Level: ${level}\n\n${explanation}\n\nDiagram\n${diagram}`
-      : `Level: ${level}\n\n${explanation}`;
+    
+    // Create enhanced display with collapsible sections
+    readable.innerHTML = "";
+    
+    // Add level indicator
+    const levelHeader = document.createElement("div");
+    levelHeader.className = "explanation-header";
+    levelHeader.innerHTML = `<strong>Explanation Level:</strong> ${level.charAt(0).toUpperCase() + level.slice(1)}`;
+    readable.appendChild(levelHeader);
+    
+    // Add explanation section
+    if (explanation) {
+      const explSection = createCollapsibleSection("Explanation", explanation, true);
+      readable.appendChild(explSection);
+    }
+    
+    // Add diagram section if exists
+    if (diagram) {
+      const diagramSection = createCollapsibleSection("Diagram / Detailed View", diagram, true);
+      readable.appendChild(diagramSection);
+    }
+    
     return;
   }
 
@@ -339,6 +377,16 @@ async function onTaskSubmit(event) {
   }
 }
 
+function collapseAll() {
+  const sections = document.querySelectorAll(".collapsible-section");
+  sections.forEach(section => section.open = false);
+}
+
+function expandAll() {
+  const sections = document.querySelectorAll(".collapsible-section");
+  sections.forEach(section => section.open = true);
+}
+
 window.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("upload-form").addEventListener("submit", onUploadSubmit);
   document.getElementById("task-form").addEventListener("submit", onTaskSubmit);
@@ -346,6 +394,8 @@ window.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("select-all-papers").addEventListener("click", selectAllPapers);
   document.getElementById("deselect-all-papers").addEventListener("click", deselectAllPapers);
   document.getElementById("task-type").addEventListener("change", updateTaskInputs);
+  document.getElementById("collapse-all").addEventListener("click", collapseAll);
+  document.getElementById("expand-all").addEventListener("click", expandAll);
   updateTaskInputs();
   await refreshPapers();
 });

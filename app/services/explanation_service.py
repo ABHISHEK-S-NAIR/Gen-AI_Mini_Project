@@ -1,4 +1,9 @@
 from app.services.structured_extraction_service import extract_structured_for_papers
+from app.services.dimension_inference_service import (
+    DimensionInference,
+    create_component_breakdown,
+    format_component_breakdown,
+)
 
 
 def _format_hyperparams(hyperparams: dict[str, str]) -> str:
@@ -297,170 +302,11 @@ def _training_vs_inference_view(technique: str, dimensions: dict[str, str], hype
 └────────────────────────────────┘
       ↓
 [Predictions]
-      ↓
+       ↓
 [Post-processing (if needed)]
       ↓
 [Final Output]
 """
-    """Generate ASCII diagram based on technique and architecture."""
-    t = technique.lower()
-    a = architecture.lower()
-    
-    # Transformer-based architectures
-    if "self-attention" in t or "transformer" in t:
-        return """[Input Sequence]
-      ↓
-┌─────────────────┐
-│ Token Embedding │
-│ + Positional    │
-└─────────────────┘
-      ↓
-┌─────────────────┐
-│ Multi-Head      │
-│ Self-Attention  │
-└─────────────────┘
-      ↓
-┌─────────────────┐
-│ Feed-Forward    │
-│ Network         │
-└─────────────────┘
-      ↓
-[Output / Predictions]"""
-    
-    # Retrieval-augmented generation
-    if "retrieval" in t:
-        return """[Query]
-   ↓
-┌──────────────┐
-│  Retriever   │ ←─── [Document Store]
-└──────────────┘
-   ↓
-[Retrieved Context]
-   ↓
-┌──────────────┐
-│  Generator   │
-│  (LM/Model)  │
-└──────────────┘
-   ↓
-[Grounded Output]"""
-    
-    # Masked Language Model (BERT-style)
-    if "mlm" in t or "bert" in t:
-        return """[Input Text]
-      ↓
-┌─────────────────┐
-│ Tokenization    │
-│ + [MASK] tokens │
-└─────────────────┘
-      ↓
-┌─────────────────┐
-│ Bidirectional   │
-│ Encoder Layers  │
-└─────────────────┘
-      ↓
-┌─────────────────┐
-│ MLM Head        │
-│ Predict [MASK]  │
-└─────────────────┘
-      ↓
-[Fine-tuned Model]"""
-    
-    # CNN architectures
-    if "cnn" in t or "convolutional" in t or "resnet" in t or "conv" in a:
-        return """[Input Image]
-      ↓
-┌─────────────────┐
-│ Convolutional   │
-│ Layers + Pool   │
-└─────────────────┘
-      ↓
-┌─────────────────┐
-│ Feature Maps    │
-│ (Deep Layers)   │
-└─────────────────┘
-      ↓
-┌─────────────────┐
-│ Classification  │
-│ / Output Head   │
-└─────────────────┘
-      ↓
-[Predictions]"""
-    
-    # GAN architectures
-    if "gan" in t or "generative adversarial" in t:
-        return """[Random Noise z]        [Real Data]
-      ↓                    ↓
-┌─────────────┐     ┌─────────────┐
-│  Generator  │     │ Discriminator│
-│   G(z)      │     │   D(x)      │
-└─────────────┘     └─────────────┘
-      ↓                    ↑
-[Fake Data] ───────────────┘
-      ↓
-[Adversarial Training Loop]
-  G tries to fool D
-  D tries to detect fakes"""
-    
-    # Encoder-Decoder (Seq2Seq)
-    if "encoder-decoder" in t or "seq2seq" in t or "sequence-to-sequence" in t:
-        return """[Input Sequence]
-      ↓
-┌─────────────────┐
-│    Encoder      │
-│  (e.g., LSTM)   │
-└─────────────────┘
-      ↓
-[Context Vector]
-      ↓
-┌─────────────────┐
-│    Decoder      │
-│  (e.g., LSTM)   │
-└─────────────────┘
-      ↓
-[Output Sequence]"""
-    
-    # Graph Neural Networks
-    if "graph" in t or "gnn" in t:
-        return """[Graph Structure]
-  (Nodes + Edges)
-      ↓
-┌─────────────────┐
-│ Node Feature    │
-│ Aggregation     │
-└─────────────────┘
-      ↓
-┌─────────────────┐
-│ Message Passing │
-│ (k iterations)  │
-└─────────────────┘
-      ↓
-[Node/Graph Embedding]"""
-    
-    # Contrastive Learning
-    if "contrastive" in t or "simclr" in t or "clip" in t:
-        return """[Anchor Sample]    [Positive]    [Negative]
-      ↓              ↓             ↓
-┌──────────────────────────────────────┐
-│         Encoder Network              │
-└──────────────────────────────────────┘
-      ↓              ↓             ↓
-[Embedding Space - Pull similar close,
-                   Push different apart]"""
-    
-    # Default fallback
-    return """[Input Data]
-      ↓
-┌─────────────────┐
-│ Feature         │
-│ Extraction      │
-└─────────────────┘
-      ↓
-┌─────────────────┐
-│ Task-Specific   │
-│ Processing      │
-└─────────────────┘
-      ↓
-[Output/Prediction]"""
 
 
 def explain(paper_id: str, level: str) -> dict[str, object]:
@@ -572,7 +418,7 @@ def explain(paper_id: str, level: str) -> dict[str, object]:
             "diagram": diagram,
         }
     
-    # Training vs Inference view (new level)
+    # Training vs Inference view
     if level == "training":
         hyperparams = item.get('hyperparameters', {})
         dimensions = item.get('dimensions', {})
@@ -590,6 +436,60 @@ def explain(paper_id: str, level: str) -> dict[str, object]:
             "paper_id": paper_id,
             "paper_name": item["title"],
             "level": "training",
+            "explanation": explanation,
+            "diagram": diagram,
+        }
+    
+    # Pipeline inference with detailed dimensions
+    if level == "pipeline":
+        dimensions = item.get('dimensions', {})
+        technique = item.get('core_technique', 'transformer')
+        
+        try:
+            dim_inference = DimensionInference(dimensions, technique)
+            pipeline = dim_inference.infer_pipeline()
+            diagram = dim_inference.format_pipeline_diagram(pipeline)
+            
+            explanation = (
+                f"Pipeline Dimension Inference\n\n"
+                f"This shows the exact tensor shapes and parameter counts at each layer.\n"
+                f"Technique: {technique}\n"
+                f"Architecture: {item['architecture']}\n"
+                f"Total Layers: {len(pipeline)}"
+            )
+            
+            return {
+                "paper_id": paper_id,
+                "paper_name": item["title"],
+                "level": "pipeline",
+                "explanation": explanation,
+                "diagram": diagram,
+            }
+        except Exception as e:
+            return {
+                "paper_id": paper_id,
+                "paper_name": item["title"],
+                "level": "pipeline",
+                "explanation": f"Pipeline inference failed: {str(e)}",
+                "diagram": None,
+            }
+    
+    # Component breakdown with actual data
+    if level == "components":
+        components = create_component_breakdown(item)
+        diagram = format_component_breakdown(components)
+        
+        explanation = (
+            f"Component Breakdown\n\n"
+            f"This shows all extracted components with actual paper data.\n"
+            f"Architecture: {item['architecture']}\n"
+            f"Technique: {item['core_technique']}"
+        )
+        
+        return {
+            "paper_id": paper_id,
+            "paper_name": item["title"],
+            "level": "components",
             "explanation": explanation,
             "diagram": diagram,
         }

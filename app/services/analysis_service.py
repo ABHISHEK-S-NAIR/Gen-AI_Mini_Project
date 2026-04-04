@@ -80,9 +80,10 @@ def _insight_summary(structured_items: list[dict[str, str]]) -> dict[str, str]:
 
     if len(structured_items) == 1:
         s = structured_items[0]
+        metrics_str = ", ".join(s.get('metrics', [])[:3]) if s.get('metrics') else "no explicit metrics"
         return {
             "insight_summary": f"The core contribution is {s['novelty']}",
-            "why_it_matters": f"It matters because it targets {s['problem']} with measurable signal {s['metric']}.",
+            "why_it_matters": f"It matters because it targets {s['problem']} with measurable signal {metrics_str}.",
             "evolution": f"Prior baselines -> {s['title']} -> follow-up methods in the same task family.",
         }
 
@@ -117,7 +118,8 @@ def analyse(paper_ids: list[str]) -> dict[str, object]:
             f"The method is organized around {s['core_technique']} with a {s['learning_strategy']} strategy."
         )
         key_idea = _sanitize_analysis_text(f"The central idea is {s['novelty']}.")
-        results = _sanitize_analysis_text(f"Reported results indicate {s['results']} with metric evidence {s['metric']}.")
+        metrics_str = ", ".join(s.get('metrics', [])[:3]) if s.get('metrics') else "no explicit metrics"
+        results = _sanitize_analysis_text(f"Reported results indicate {s['results']} with metric evidence {metrics_str}.")
 
         analyses.append(
             {
@@ -151,7 +153,7 @@ def analyse(paper_ids: list[str]) -> dict[str, object]:
                 },
                 "explanation": {
                     "beginner": f"The paper solves {s['problem']} using {s['core_technique']}.",
-                    "intermediate": f"Method: {s['proposed_method']}. Result: {s['results']} ({s['metric']}).",
+                    "intermediate": f"Method: {s['proposed_method']}. Result: {s['results']} ({metrics_str}).",
                     "expert": (
                         f"Architectural/training interpretation: {s['architecture']} with {s['learning_strategy']}; "
                         f"novelty = {s['novelty']}"
