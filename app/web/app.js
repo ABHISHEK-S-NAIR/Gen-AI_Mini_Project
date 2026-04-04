@@ -136,8 +136,7 @@ function renderResult(data) {
 
   if (task === "explain") {
     const level = payload.level || "unknown";
-    const explanation = payload.explanation || "No explanation generated.";
-    const diagram = payload.diagram || "";
+    const explanations = Array.isArray(payload.explanations) ? payload.explanations : [];
     
     // Create enhanced display with collapsible sections
     readable.innerHTML = "";
@@ -145,20 +144,38 @@ function renderResult(data) {
     // Add level indicator
     const levelHeader = document.createElement("div");
     levelHeader.className = "explanation-header";
-    levelHeader.innerHTML = `<strong>Explanation Level:</strong> ${level.charAt(0).toUpperCase() + level.slice(1)}`;
+    levelHeader.innerHTML = `<strong>Explanation Level:</strong> ${level.charAt(0).toUpperCase() + level.slice(1)} | <strong>Papers:</strong> ${explanations.length}`;
     readable.appendChild(levelHeader);
     
-    // Add explanation section
-    if (explanation) {
-      const explSection = createCollapsibleSection("Explanation", explanation, true);
-      readable.appendChild(explSection);
+    if (!explanations.length) {
+      const noData = document.createElement("p");
+      noData.textContent = "No explanations generated.";
+      readable.appendChild(noData);
+      return;
     }
     
-    // Add diagram section if exists
-    if (diagram) {
-      const diagramSection = createCollapsibleSection("Diagram / Detailed View", diagram, true);
-      readable.appendChild(diagramSection);
-    }
+    // Render each paper's explanation
+    explanations.forEach((item, idx) => {
+      const paperHeader = document.createElement("div");
+      paperHeader.className = "paper-separator";
+      paperHeader.innerHTML = `<h3>📄 Paper ${idx + 1}: ${item.paper_name || item.paper_id || "Unknown"}</h3>`;
+      readable.appendChild(paperHeader);
+      
+      const explanation = item.explanation || "No explanation generated.";
+      const diagram = item.diagram || "";
+      
+      // Add explanation section
+      if (explanation) {
+        const explSection = createCollapsibleSection("Explanation", explanation, true);
+        readable.appendChild(explSection);
+      }
+      
+      // Add diagram section if exists
+      if (diagram) {
+        const diagramSection = createCollapsibleSection("Diagram / Detailed View", diagram, true);
+        readable.appendChild(diagramSection);
+      }
+    });
     
     return;
   }

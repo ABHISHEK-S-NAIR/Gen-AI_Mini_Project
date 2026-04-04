@@ -24,7 +24,7 @@ def route_task(
         return answer_question_with_sections(question or "", selected_papers, sections)
     if task == "explain":
         if not selected_papers:
-            return {}
-        return explain(selected_papers[0], level or "intermediate")
+            return {"explanations": [], "level": level or "intermediate"}
+        return explain(selected_papers, level or "intermediate")
 
     return {"error": {"code": "E000", "message": "UNKNOWN_TASK"}}

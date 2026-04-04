@@ -294,6 +294,23 @@ button.secondary {
   font-size: 0.95rem;
 }
 
+.paper-separator {
+  margin: 24px 0 16px 0;
+  padding: 12px 0;
+  border-top: 2px solid var(--line);
+}
+
+.paper-separator:first-of-type {
+  margin-top: 0;
+  border-top: none;
+}
+
+.paper-separator h3 {
+  margin: 0;
+  font-size: 1.2rem;
+  color: var(--accent);
+}
+
 .output-controls {
   display: flex;
   gap: 8px;

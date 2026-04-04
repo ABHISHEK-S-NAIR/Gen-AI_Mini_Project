@@ -309,7 +309,7 @@ def _training_vs_inference_view(technique: str, dimensions: dict[str, str], hype
 """
 
 
-def explain(paper_id: str, level: str) -> dict[str, object]:
+def _explain_single(paper_id: str, level: str) -> dict[str, object]:
     items = extract_structured_for_papers([paper_id])
     if not items:
         return {"paper_id": paper_id, "level": level, "explanation": "No data available.", "diagram": None}
@@ -502,4 +502,30 @@ def explain(paper_id: str, level: str) -> dict[str, object]:
         "level": "visual",
         "explanation": f"Visual Architecture Flow\n\nTechnique: {item['core_technique']}\nArchitecture: {item['architecture']}\nModel Size: {dimensions_str}",
         "diagram": _diagram_with_dimensions(item["core_technique"], item["architecture"], dimensions),
+    }
+
+
+def explain(paper_ids: list[str], level: str) -> dict[str, object]:
+    """
+    Explain multiple papers at the specified level.
+    
+    Args:
+        paper_ids: List of paper IDs to explain
+        level: Explanation level (beginner, intermediate, expert, visual, training, pipeline, components)
+    
+    Returns:
+        Dictionary containing explanations for all papers
+    """
+    if not paper_ids:
+        return {"explanations": [], "level": level}
+    
+    explanations = []
+    for paper_id in paper_ids:
+        explanation = _explain_single(paper_id, level)
+        explanations.append(explanation)
+    
+    return {
+        "explanations": explanations,
+        "level": level,
+        "count": len(explanations),
     }
