@@ -7,12 +7,16 @@ from app.core.errors import ERRORS
 from app.core.state import state
 from app.models.schemas import IngestedPaper
 from app.services.chunker import chunk_sections
-from app.services.embedding_engine import embed_texts
+from app.services.embedding_engine import embed_texts, get_embedding_dim
 from app.services.section_detector import detect_sections
 from app.services.text_extractor import extract_text_from_pdf_bytes
 
 
 async def ingest_files(files: list[UploadFile]) -> dict[str, object]:
+    # Sync config dim to actual model dim on first call
+    if settings.embedding_dim != get_embedding_dim():
+        settings.embedding_dim = get_embedding_dim()
+    
     ingested: list[IngestedPaper] = []
 
     for uploaded in files:

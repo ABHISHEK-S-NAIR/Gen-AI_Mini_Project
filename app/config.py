@@ -7,7 +7,7 @@ class Settings(BaseModel):
     top_k_chunks: int = 5
     top_n_papers: int = 3
     similarity_threshold: float = 0.70
-    embedding_dim: int = 128
+    embedding_dim: int = 768  # Updated: matches SciBERT output dim (fallback MiniLM uses 384, auto-detected)
 
 
 settings = Settings()
