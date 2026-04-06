@@ -2,6 +2,8 @@
 Embedding engine using SciBERT for scientific text.
 Primary model: allenai/scibert_scivocab_uncased (768-dim)
 Fallback model: all-MiniLM-L6-v2 (384-dim) — used automatically if SciBERT fails to load.
+
+GPU acceleration: supports CUDA (NVIDIA), MPS (Apple Silicon), and CPU fallback.
 """
 import logging
 import numpy as np
@@ -15,30 +17,66 @@ _FALLBACK_MODEL_NAME = "all-MiniLM-L6-v2"
 _model: SentenceTransformer | None = None
 _active_model_name: str = ""
 _active_dim: int = 768
+_device: str = "cpu"
+
+
+def _get_best_device() -> str:
+    """
+    Detect the best available device for inference.
+    Returns device name as string.
+    
+    Priority order:
+    1. MPS (Apple Silicon GPU) - Best for Mac
+    2. CUDA (NVIDIA GPU) - Best for Linux/Windows with NVIDIA
+    3. CPU - Universal fallback
+    """
+    try:
+        import torch
+        
+        # Check for Apple Silicon GPU (Mac M1/M2/M3)
+        if torch.backends.mps.is_available() and torch.backends.mps.is_built():
+            logger.info("Using MPS (Apple Silicon GPU) for embeddings")
+            return "mps"
+        
+        # Check for NVIDIA CUDA GPU
+        if torch.cuda.is_available():
+            logger.info("Using CUDA (NVIDIA GPU) for embeddings")
+            return "cuda"
+        
+        # Fallback to CPU
+        logger.info("Using CPU for embeddings (no GPU acceleration available)")
+        return "cpu"
+        
+    except ImportError:
+        logger.warning("PyTorch not available for embeddings, defaulting to CPU")
+        return "cpu"
 
 
 def _get_model() -> SentenceTransformer:
-    global _model, _active_model_name, _active_dim
+    global _model, _active_model_name, _active_dim, _device
     if _model is not None:
         return _model
+
+    # Detect best device
+    _device = _get_best_device()
 
     # Try primary (SciBERT)
     try:
         logger.info(f"Loading embedding model: {_PRIMARY_MODEL_NAME}")
-        _model = SentenceTransformer(_PRIMARY_MODEL_NAME)
+        _model = SentenceTransformer(_PRIMARY_MODEL_NAME, device=_device)
         _active_model_name = _PRIMARY_MODEL_NAME
         _active_dim = 768
-        logger.info(f"Loaded {_PRIMARY_MODEL_NAME} successfully (dim={_active_dim})")
+        logger.info(f"Loaded {_PRIMARY_MODEL_NAME} successfully on {_device} (dim={_active_dim})")
         return _model
     except Exception as e:
         logger.warning(f"Failed to load {_PRIMARY_MODEL_NAME}: {e}. Falling back to {_FALLBACK_MODEL_NAME}.")
 
     # Fallback (MiniLM)
     try:
-        _model = SentenceTransformer(_FALLBACK_MODEL_NAME)
+        _model = SentenceTransformer(_FALLBACK_MODEL_NAME, device=_device)
         _active_model_name = _FALLBACK_MODEL_NAME
         _active_dim = 384
-        logger.info(f"Loaded fallback model {_FALLBACK_MODEL_NAME} (dim={_active_dim})")
+        logger.info(f"Loaded fallback model {_FALLBACK_MODEL_NAME} on {_device} (dim={_active_dim})")
         return _model
     except Exception as e:
         raise RuntimeError(

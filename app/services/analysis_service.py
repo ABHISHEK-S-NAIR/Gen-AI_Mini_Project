@@ -1,5 +1,7 @@
+from app.core.state import state
 from app.services.citation_service import analyse_citations_for_papers
 from app.services.structured_extraction_service import extract_structured_for_papers
+from app.services.summarization_engine import summarize, summarize_multiple
 
 
 def _sanitize_analysis_text(text: str) -> str:
@@ -99,6 +101,94 @@ def _insight_summary(structured_items: list[dict[str, str]]) -> dict[str, str]:
     }
 
 
+def _get_paper_full_text(paper_id: str) -> str:
+    """Concatenate all non-empty sections of a paper into one string."""
+    sections = state.sections.get(paper_id, {})
+    parts = []
+    for sec in ("abstract", "intro", "method", "results", "conclusion"):
+        text = sections.get(sec, "").strip()
+        if text:
+            parts.append(text)
+    return "\n\n".join(parts)
+
+
+def _summarize_paper_fields(paper_id: str, structured: dict) -> dict[str, str]:
+    """
+    Generate real summarized text for the four analysis fields.
+    Uses section-specific text as input to the summarizer wherever available,
+    falling back to structured extraction strings if a section is empty.
+    """
+    sections = state.sections.get(paper_id, {})
+
+    # Use raw section text as input when available; fall back to structured strings
+    abstract_text = sections.get("abstract", "").strip()
+    method_text = sections.get("method", "").strip()
+    results_text = sections.get("results", "").strip()
+    intro_text = sections.get("intro", "").strip()
+    conclusion_text = sections.get("conclusion", "").strip()
+
+    # Prepare all inputs for batch summarization
+    inputs = []
+    fallbacks = []
+    
+    # Summary: abstract + intro give the best overview
+    summary_input = " ".join(filter(None, [abstract_text, intro_text]))
+    if not summary_input:
+        summary_input = f"{structured['problem']} {structured['proposed_method']}"
+    inputs.append(summary_input)
+    fallbacks.append(_sanitize_analysis_text(
+        f"The paper addresses {structured['problem']} and proposes {structured['proposed_method']}."
+    ))
+
+    # Methodology: method section is the ground truth
+    methodology_input = method_text or f"{structured['core_technique']} {structured['learning_strategy']}"
+    inputs.append(methodology_input)
+    fallbacks.append(_sanitize_analysis_text(
+        f"The method is organized around {structured['core_technique']} with a {structured['learning_strategy']} strategy."
+    ))
+
+    # Key idea: abstract is usually the most distilled statement of novelty
+    key_idea_input = abstract_text or structured['novelty']
+    if len(key_idea_input.split()) > 30:
+        inputs.append(key_idea_input)
+        fallbacks.append(_sanitize_analysis_text(f"The central idea is {structured['novelty']}."))
+    else:
+        # Short enough, don't summarize
+        inputs.append("")  # empty placeholder
+        fallbacks.append(key_idea_input)
+
+    # Results: results section directly
+    metrics_str = ", ".join(structured.get('metrics', [])[:3]) if structured.get('metrics') else ""
+    results_input = " ".join(filter(None, [results_text, conclusion_text]))
+    if not results_input:
+        results_input = f"{structured['results']} {metrics_str}"
+    inputs.append(results_input)
+    fallbacks.append(_sanitize_analysis_text(f"Reported results indicate {structured['results']} with metric evidence {metrics_str}."))
+    
+    # Batch summarize all at once
+    try:
+        summaries = summarize_multiple(inputs)
+        # Use fallbacks for empty results or failures
+        summary = summaries[0] if summaries[0] else fallbacks[0]
+        methodology = summaries[1] if summaries[1] else fallbacks[1]
+        key_idea = summaries[2] if summaries[2] else fallbacks[2]
+        results_summary = summaries[3] if summaries[3] else fallbacks[3]
+    except Exception as e:
+        # Complete fallback to template strings
+        summary = fallbacks[0]
+        methodology = fallbacks[1]
+        key_idea = fallbacks[2]
+        results_summary = fallbacks[3]
+
+    return {
+        "summary": summary,
+        "methodology": methodology,
+        "key_idea": key_idea,
+        "results": results_summary,
+    }
+
+
+
 def analyse(paper_ids: list[str]) -> dict[str, object]:
     structured_items = extract_structured_for_papers(paper_ids)
     citation_payload = analyse_citations_for_papers(paper_ids)
@@ -111,15 +201,13 @@ def analyse(paper_ids: list[str]) -> dict[str, object]:
     analyses: list[dict[str, str]] = []
     reports: list[dict[str, object]] = []
     for s in structured_items:
-        summary = _sanitize_analysis_text(
-            f"The paper addresses {s['problem']} and proposes {s['proposed_method']}."
-        )
-        methodology = _sanitize_analysis_text(
-            f"The method is organized around {s['core_technique']} with a {s['learning_strategy']} strategy."
-        )
-        key_idea = _sanitize_analysis_text(f"The central idea is {s['novelty']}.")
+        # NEW — real summarization
+        summarized = _summarize_paper_fields(s["paper_id"], s)
+        summary = summarized["summary"]
+        methodology = summarized["methodology"]
+        key_idea = summarized["key_idea"]
+        results = summarized["results"]
         metrics_str = ", ".join(s.get('metrics', [])[:3]) if s.get('metrics') else "no explicit metrics"
-        results = _sanitize_analysis_text(f"Reported results indicate {s['results']} with metric evidence {metrics_str}.")
 
         analyses.append(
             {
