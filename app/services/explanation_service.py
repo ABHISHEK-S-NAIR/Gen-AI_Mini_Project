@@ -1,9 +1,115 @@
+from app.core.state import state
+from app.services.llm_client import call_llm
 from app.services.structured_extraction_service import extract_structured_for_papers
 from app.services.dimension_inference_service import (
     DimensionInference,
     create_component_breakdown,
     format_component_breakdown,
 )
+
+
+_EXPLAIN_SYSTEM = (
+    "You are an expert at explaining research papers. "
+    "Base your explanation strictly on the provided paper content. "
+    "Do not add information that is not present in the text."
+)
+
+_SECTION_WORD_LIMIT = 600  # words per section fed into explanation prompts
+
+
+def _build_explanation_context(paper_id: str, item: dict) -> str:
+    """
+    Build a labelled context block from raw paper sections.
+    Falls back to structured extraction strings if sections are empty.
+    This is the retrieval step — contextual embeddings from BERT power
+    the section chunking upstream; here we use the retrieved text directly.
+    """
+    sections = state.sections.get(paper_id, {})
+    parts = []
+
+    for sec in ("abstract", "intro", "method", "results", "conclusion"):
+        text = sections.get(sec, "").strip()
+        if text:
+            words = text.split()
+            truncated = " ".join(words[:_SECTION_WORD_LIMIT])
+            parts.append(f"[{sec.upper()}]\n{truncated}")
+
+    if parts:
+        return "\n\n".join(parts)
+
+    # Fallback: use structured extraction strings if no sections available
+    return (
+        f"[PROBLEM]\n{item['problem']}\n\n"
+        f"[METHOD]\n{item['proposed_method']} using {item['core_technique']}\n\n"
+        f"[RESULTS]\n{item['results']}\n\n"
+        f"[NOVELTY]\n{item['novelty']}"
+    )
+
+
+def _prompt_beginner(context: str) -> str:
+    return f"""Explain this research paper to a curious high school student
+who has never studied machine learning or computer science.
+
+Rules you must follow:
+- Use everyday language and simple analogies — no technical jargon
+- If you must use a technical term, immediately explain it in plain words
+- Focus on WHY this research matters in the real world
+- Keep it to 3-4 short paragraphs maximum
+
+Paper content:
+{context}"""
+
+
+def _prompt_intermediate(context: str, item: dict) -> str:
+    metrics_str = ", ".join(item.get("metrics", [])[:4]) if item.get("metrics") else "see results section"
+    datasets_str = ", ".join(item.get("datasets", [])) if item.get("datasets") else "see paper"
+    return f"""Explain this research paper to a computer science undergraduate
+who understands the basics of machine learning but is not an expert.
+
+Structure your explanation with these exact sections:
+PROBLEM: What challenge does this paper address and why does it matter?
+METHOD: How does the proposed approach work technically? (2-3 sentences)
+KEY INNOVATION: What is the single most novel idea compared to prior work?
+RESULTS: What did the experiments show? Include specific metrics if available.
+LIMITATIONS: What are the main weaknesses or open questions?
+
+Important: the results section must mention metrics or benchmarks.
+Known metrics from extraction: {metrics_str}
+Known datasets: {datasets_str}
+
+Paper content:
+{context}"""
+
+
+def _prompt_expert(context: str, item: dict) -> str:
+    hyperparams_str = _format_hyperparams(item.get("hyperparameters", {}))
+    dimensions_str = _format_dimensions(item.get("dimensions", {}))
+    ablations_str = "; ".join(item.get("ablations", [])) if item.get("ablations") else "not reported"
+    return f"""Provide a rigorous technical analysis of this research paper
+for an ML researcher who will evaluate it critically.
+
+Cover each of the following — be specific and use the paper's own numbers:
+1. ARCHITECTURE & DESIGN: What is the base architecture? What are the key
+   architectural choices and why were they made?
+2. TRAINING STRATEGY: How was the model trained? Include optimizer, learning
+   rate, batch size, and any pretraining or fine-tuning stages.
+3. NOVELTY vs PRIOR WORK: What specifically distinguishes this from baselines
+   mentioned in the paper?
+4. EMPIRICAL EVIDENCE: Report concrete numbers — BLEU, accuracy, F1, etc.
+   How large are the gains? Are they statistically significant?
+5. ABLATION & ANALYSIS: What ablation studies were conducted and what did
+   they reveal about which components matter most?
+6. LIMITATIONS & FUTURE WORK: What does the paper itself acknowledge as
+   limitations? What would a critical reviewer flag?
+
+Pre-extracted values for reference (use paper content to verify/expand):
+Architecture: {item.get('architecture', 'unknown')}
+Dimensions: {dimensions_str}
+Hyperparameters: {hyperparams_str}
+Ablations noted: {ablations_str}
+
+Paper content:
+{context}"""
 
 
 def _format_hyperparams(hyperparams: dict[str, str]) -> str:
@@ -334,69 +440,63 @@ def _explain_single(paper_id: str, level: str) -> dict[str, object]:
     # Format ablations
     ablations_str = "\n• ".join(item.get('ablations', [])) if item.get('ablations') else "not reported"
 
-    beginner = (
-        f"This paper tries to solve {item['problem']}. "
-        f"It does this by using {item['core_technique']} in a simple pipeline. "
-        f"The main result says {item['results']}."
-    )
+    if level in ("beginner", "intermediate", "expert"):
+        context = _build_explanation_context(paper_id, item)
 
-    intermediate = (
-        f"📋 PROBLEM\n"
-        f"{item['problem']}\n\n"
-        f"🔧 PROPOSED SOLUTION\n"
-        f"{item['proposed_method']}\n\n"
-        f"⚙️ HOW IT WORKS\n"
-        f"Technique: {item['core_technique']}\n"
-        f"Training: {item['learning_strategy']}\n"
-        f"Architecture: {item['architecture']}\n\n"
-        f"📊 RESULTS\n"
-        f"{item['results']}\n"
-        f"Metrics: {metrics_str}\n"
-        f"Improvements: {improvements_str}\n\n"
-        f"🗂️ DATASETS USED\n"
-        f"{datasets_str}\n\n"
-        f"💡 KEY INNOVATION\n"
-        f"{item['novelty']}\n\n"
-        f"⚠️ LIMITATIONS\n"
-        f"{item['limitations']}"
-    )
+        if level == "beginner":
+            prompt = _prompt_beginner(context)
+        elif level == "intermediate":
+            prompt = _prompt_intermediate(context, item)
+        else:  # expert
+            prompt = _prompt_expert(context, item)
 
-    expert = (
-        f"ARCHITECTURE & DESIGN\n"
-        f"• Base Architecture: {item['architecture']}\n"
-        f"• Core Technique: {item['core_technique']}\n"
-        f"• Contribution Type: {item['contribution_type']}\n"
-        f"• Model Dimensions: {dimensions_str}\n\n"
-        f"TRAINING STRATEGY\n"
-        f"• Learning Strategy: {item['learning_strategy']}\n"
-        f"• Hyperparameters: {hyperparams_str}\n"
-        f"• Datasets: {datasets_str}\n\n"
-        f"KEY INNOVATION\n"
-        f"• {item['novelty']}\n\n"
-        f"EMPIRICAL RESULTS\n"
-        f"• Results: {item['results']}\n"
-        f"• Metrics: {metrics_str}\n"
-        f"• Performance Gains: {improvements_str}\n\n"
-        f"ABLATION STUDIES\n"
-        f"• {ablations_str}\n\n"
-        f"LIMITATIONS & CONSTRAINTS\n"
-        f"• {item['limitations']}"
-    )
+        try:
+            explanation = call_llm(
+                prompt,
+                system=_EXPLAIN_SYSTEM,
+                max_tokens=700,
+                temperature=0.3,
+            )
+            # Check if LLM returned stub message - treat as failure
+            if "[LLM_UNAVAILABLE:" in explanation:
+                raise Exception("LLM unavailable")
+        except Exception as e:
+            # Graceful fallback to template strings if LLM unavailable
+            import logging
+            logging.getLogger(__name__).warning(f"LLM explanation failed for {paper_id}: {e}")
+            metrics_str = ", ".join(item.get('metrics', [])[:3]) or "no explicit metrics"
+            if level == "beginner":
+                explanation = (
+                    f"This paper tries to solve {item['problem']}. "
+                    f"It does this by using {item['core_technique']} in a simple pipeline. "
+                    f"The main result says {item['results']}."
+                )
+            elif level == "intermediate":
+                explanation = (
+                    f"PROBLEM\n{item['problem']}\n\n"
+                    f"METHOD\n{item['proposed_method']}\n\n"
+                    f"RESULTS\n{item['results']}\nMetrics: {metrics_str}\n\n"
+                    f"LIMITATIONS\n{item['limitations']}"
+                )
+            else:
+                explanation = (
+                    f"ARCHITECTURE & DESIGN\n"
+                    f"• Architecture: {item['architecture']}\n"
+                    f"• Core Technique: {item['core_technique']}\n\n"
+                    f"TRAINING STRATEGY\n"
+                    f"• Learning Strategy: {item['learning_strategy']}\n\n"
+                    f"EMPIRICAL EVIDENCE\n"
+                    f"• Results: {item['results']}\n"
+                    f"• Metrics: {metrics_str}"
+                )
 
-    if level == "beginner":
-        return {"paper_id": paper_id, "paper_name": item["title"], "level": "beginner", "explanation": beginner, "diagram": None}
-    
-    if level == "intermediate":
         return {
             "paper_id": paper_id,
             "paper_name": item["title"],
-            "level": "intermediate",
-            "explanation": intermediate,
+            "level": level,
+            "explanation": explanation,
             "diagram": None,
         }
-    
-    if level == "expert":
-        return {"paper_id": paper_id, "paper_name": item["title"], "level": "expert", "explanation": expert, "diagram": None}
     
     # Visual level with enhanced diagrams
     if level == "visual":
@@ -505,17 +605,21 @@ def _explain_single(paper_id: str, level: str) -> dict[str, object]:
     }
 
 
-def explain(paper_ids: list[str], level: str) -> dict[str, object]:
+def explain(paper_ids: list[str] | str, level: str) -> dict[str, object]:
     """
     Explain multiple papers at the specified level.
     
     Args:
-        paper_ids: List of paper IDs to explain
+        paper_ids: List of paper IDs to explain, or a single paper ID string (for backward compatibility)
         level: Explanation level (beginner, intermediate, expert, visual, training, pipeline, components)
     
     Returns:
-        Dictionary containing explanations for all papers
+        Dictionary containing explanations for all papers, or single explanation dict if input was a string
     """
+    # Backward compatibility: accept single paper ID as string
+    if isinstance(paper_ids, str):
+        return _explain_single(paper_ids, level)
+    
     if not paper_ids:
         return {"explanations": [], "level": level}
     
