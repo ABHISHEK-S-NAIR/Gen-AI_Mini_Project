@@ -61,11 +61,10 @@ CONTRASTING_KEYWORDS = (
     "better than",
     "advantages over",
     "advantage over",
-    "however",  # Moved from weak contrast
-    "but",  # Moved from weak contrast
 )
 
-WEAK_CONTRAST_WORDS = ()  # Deprecated - moved to main CONTRASTING_KEYWORDS
+# Weak signals that need reinforcement from other keywords
+WEAK_CONTRAST_WORDS = ("however", "but")
 
 ABBREVIATION_MAP = {
     "et al.": "et al<prd>",
@@ -152,37 +151,43 @@ def _classify_sentence(sentence: str) -> str:
     
     Handles complex cases like:
     - Negation after supporting keywords ("similar to X, but fails...")
+    - Weak contrast words (but/however) that need reinforcement
     - Multiple competing signals
-    - Weak indicators that need reinforcement
     
     Priority: contrasting > supporting > neutral
     """
     lowered = sentence.lower()
     
-    # Check for strong contrasting signals first
-    has_contrast = any(k in lowered for k in CONTRASTING_KEYWORDS)
+    # Check for strong contrasting signals
+    has_strong_contrast = any(k in lowered for k in CONTRASTING_KEYWORDS)
+    
+    # Check for weak contrast signals (but/however)
+    has_weak_contrast = any(k in lowered for k in WEAK_CONTRAST_WORDS)
     
     # Check for supporting signals
     has_support = any(k in lowered for k in SUPPORTING_KEYWORDS)
     
-    # If both signals present, look for negation patterns that override support
-    if has_support and has_contrast:
-        # Patterns like "similar to X, but/however they fail"
-        # Check if contrast word comes after support word
+    # Weak contrast words only count if paired with support/contrast keywords
+    # E.g., "similar to X, but fails" = contrasting
+    # E.g., "However, we use X" = neutral (just transition word)
+    if has_weak_contrast and (has_support or has_strong_contrast):
+        # Check if weak contrast comes after support (indicates negation)
         support_positions = [lowered.find(k) for k in SUPPORTING_KEYWORDS if k in lowered]
-        contrast_positions = [lowered.find(k) for k in CONTRASTING_KEYWORDS if k in lowered]
+        weak_positions = [lowered.find(k) for k in WEAK_CONTRAST_WORDS if k in lowered]
         
-        if support_positions and contrast_positions:
+        if support_positions and weak_positions:
             earliest_support = min(support_positions)
-            earliest_contrast = min(contrast_positions)
+            earliest_weak = min(weak_positions)
             
-            # If contrast comes after support, it's likely a negation/limitation
-            if earliest_contrast > earliest_support:
+            # "similar to X, but fails" - weak contrast after support
+            if earliest_weak > earliest_support:
                 return "contrasting"
     
-    # Standard classification
-    if has_contrast:
+    # Strong contrast always wins
+    if has_strong_contrast:
         return "contrasting"
+    
+    # Supporting without negation
     if has_support:
         return "supporting"
     
