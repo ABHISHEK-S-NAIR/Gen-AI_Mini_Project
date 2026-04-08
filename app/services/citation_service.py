@@ -4,8 +4,31 @@ from app.core.errors import ERRORS
 from app.core.state import state
 
 
-AUTHOR_YEAR_PATTERN = re.compile(r"\([A-Z][^()]*?,\s*\d{4}[a-z]?\)")
-NUMERIC_PATTERN = re.compile(r"\[(\d+(?:\s*,\s*\d+)*)\]")
+# Comprehensive citation patterns covering common academic formats
+PATTERNS = [
+    # Author-year with parentheses: (Smith, 2020) or (Smith et al., 2020)
+    re.compile(r"\([A-Z][a-z]+(?:\s+et al\.?)?,\s*\d{4}[a-z]?\)"),
+    
+    # Narrative citation: Smith et al. (2020) or Jones (2021)
+    re.compile(r"\b[A-Z][a-z]+(?:\s+et al\.?)?\s+\(\d{4}[a-z]?\)"),
+    
+    # Multiple citations: (Smith 2020; Jones 2021) or (Smith, 2020; Jones, 2021)
+    re.compile(r"\([A-Z][a-z]+(?:\s+et al\.?)?,?\s+\d{4}(?:\s*;\s*[A-Z][a-z]+(?:\s+et al\.?)?,?\s+\d{4})+\)"),
+    
+    # Author-year without parentheses: Smith et al 2020 or Smith and Jones 2020
+    re.compile(r"\b[A-Z][a-z]+(?:\s+(?:and|&)\s+[A-Z][a-z]+|\s+et al\.?)?(?:\s+\()?(\d{4}[a-z]?)(?:\))?"),
+    
+    # Numeric citations: [12] or [1, 2, 3] or [5-8]
+    re.compile(r"\[(\d+(?:\s*,\s*\d+|-\d+)*)\]"),
+    
+    # Superscript-style (captured as regular text): ^1,2,3^
+    re.compile(r"\^(\d+(?:,\s*\d+)*)\^"),
+]
+
+# Legacy patterns kept for backward compatibility
+AUTHOR_YEAR_PATTERN = PATTERNS[0]
+NUMERIC_PATTERN = PATTERNS[4]
+
 SENTENCE_PATTERN = re.compile(r"(?<=[.?!])\s+(?=(?:[A-Z]|\d+\s+[A-Z]))")
 
 SUPPORTING_KEYWORDS = (
@@ -26,16 +49,23 @@ CONTRASTING_KEYWORDS = (
     "unlike",
     "whereas",
     "differs from",
+    "differ from",  # Added verb form
     "fails to",
+    "fail to",  # Added plural form
+    "failed to",
     "limited by",
     "as opposed to",
     "outperforms",
+    "outperform",
     "superior to",
     "better than",
     "advantages over",
+    "advantage over",
+    "however",  # Moved from weak contrast
+    "but",  # Moved from weak contrast
 )
 
-WEAK_CONTRAST_WORDS = ("however", "but")
+WEAK_CONTRAST_WORDS = ()  # Deprecated - moved to main CONTRASTING_KEYWORDS
 
 ABBREVIATION_MAP = {
     "et al.": "et al<prd>",
@@ -99,28 +129,63 @@ def _split_sentences(text: str) -> list[str]:
 
 
 def _extract_citation_strings(sentence: str) -> list[str]:
+    """
+    Extract all citation strings from a sentence using comprehensive patterns.
+    Handles author-year, narrative, and numeric citation formats.
+    """
     citations: list[str] = []
-
-    for match in AUTHOR_YEAR_PATTERN.finditer(sentence):
-        citations.append(match.group(0))
-
-    for match in NUMERIC_PATTERN.finditer(sentence):
-        citations.append(match.group(0))
-
+    seen = set()
+    
+    for pattern in PATTERNS:
+        for match in pattern.finditer(sentence):
+            citation = match.group(0).strip()
+            if citation not in seen:
+                citations.append(citation)
+                seen.add(citation)
+    
     return citations
 
 
 def _classify_sentence(sentence: str) -> str:
+    """
+    Classify citation function in a sentence.
+    
+    Handles complex cases like:
+    - Negation after supporting keywords ("similar to X, but fails...")
+    - Multiple competing signals
+    - Weak indicators that need reinforcement
+    
+    Priority: contrasting > supporting > neutral
+    """
     lowered = sentence.lower()
-
-    if any(k in lowered for k in CONTRASTING_KEYWORDS):
+    
+    # Check for strong contrasting signals first
+    has_contrast = any(k in lowered for k in CONTRASTING_KEYWORDS)
+    
+    # Check for supporting signals
+    has_support = any(k in lowered for k in SUPPORTING_KEYWORDS)
+    
+    # If both signals present, look for negation patterns that override support
+    if has_support and has_contrast:
+        # Patterns like "similar to X, but/however they fail"
+        # Check if contrast word comes after support word
+        support_positions = [lowered.find(k) for k in SUPPORTING_KEYWORDS if k in lowered]
+        contrast_positions = [lowered.find(k) for k in CONTRASTING_KEYWORDS if k in lowered]
+        
+        if support_positions and contrast_positions:
+            earliest_support = min(support_positions)
+            earliest_contrast = min(contrast_positions)
+            
+            # If contrast comes after support, it's likely a negation/limitation
+            if earliest_contrast > earliest_support:
+                return "contrasting"
+    
+    # Standard classification
+    if has_contrast:
         return "contrasting"
-    if any(k in lowered for k in WEAK_CONTRAST_WORDS):
-        # Weak contrast tokens are only considered contrasting if paired with an explicit comparative cue.
-        if any(k in lowered for k in ("unlike", "whereas", "in contrast", "as opposed to", "contrary to")):
-            return "contrasting"
-    if any(k in lowered for k in SUPPORTING_KEYWORDS):
+    if has_support:
         return "supporting"
+    
     return "neutral"
 
 

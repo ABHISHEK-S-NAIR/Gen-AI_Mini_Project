@@ -27,7 +27,13 @@ class InMemoryVectorDB:
             scored.append((score, row))
 
         scored.sort(key=lambda x: x[0], reverse=True)
-        return [row for _, row in scored[:k]]
+        # Include similarity score in each returned row
+        results = []
+        for score, row in scored[:k]:
+            row_with_score = dict(row)  # Create a copy to avoid mutating original
+            row_with_score["score"] = score
+            results.append(row_with_score)
+        return results
 
     def all_rows(self) -> list[dict[str, object]]:
         return list(self._rows)
