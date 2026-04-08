@@ -10,6 +10,11 @@ import os
 logger = logging.getLogger(__name__)
 
 
+class LLMUnavailableError(Exception):
+    """Raised when all LLM providers fail to respond."""
+    pass
+
+
 def _call_groq(prompt: str, system: str, max_tokens: int, temperature: float) -> str:
     from groq import Groq
     client = Groq(api_key=os.environ["GROQ_API_KEY"])
@@ -69,8 +74,8 @@ def call_llm(
 ) -> str:
     """
     Call the available LLM provider and return the response as a string.
-    Tries providers in order: Groq → Gemini → OpenRouter → stub.
-    Never raises — returns a fallback string on total failure.
+    Tries providers in order: Groq → Gemini → OpenRouter.
+    Raises LLMUnavailableError if all providers fail.
     """
     providers = []
     if os.environ.get("GROQ_API_KEY"):
@@ -87,8 +92,10 @@ def call_llm(
         except Exception as e:
             logger.warning(f"{name} call failed: {e}. Trying next provider.")
 
-    logger.error("No LLM provider succeeded. Returning stub response.")
-    return "[LLM_UNAVAILABLE: Set GROQ_API_KEY, GEMINI_API_KEY, or OPENROUTER_API_KEY in your environment.]"
+    logger.error("No LLM provider succeeded.")
+    raise LLMUnavailableError(
+        "All LLM providers failed. Set GROQ_API_KEY, GEMINI_API_KEY, or OPENROUTER_API_KEY in your environment."
+    )
 
 
 def call_llm_json(

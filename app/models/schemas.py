@@ -70,3 +70,58 @@ class ConfigResponse(BaseModel):
     top_n_papers: int
     similarity_threshold: float
     embedding_dim: int
+
+
+# Dedicated request/response models for split endpoints
+class QARequest(BaseModel):
+    question: str
+    paper_ids: list[str] | None = None
+    sections: list[SectionName] | None = None
+
+
+class QAResponse(BaseModel):
+    question: str
+    answer: str
+    context: list[dict]
+    grounded: bool
+    confidence: float | None = None
+    avg_relevance: float | None = None
+    selected_papers: list[str]
+
+
+class CitationRequest(BaseModel):
+    paper_ids: list[str] | None = None
+
+
+class CitationResponse(BaseModel):
+    citations: list[dict]
+    selected_papers: list[str]
+
+
+class AnalysisRequest(BaseModel):
+    paper_ids: list[str] | None = None
+
+
+class AnalysisResponse(BaseModel):
+    analysis: dict[str, object]
+    selected_papers: list[str]
+
+
+class ReviewRequest(BaseModel):
+    paper_ids: list[str] | None = None
+
+
+class ReviewResponse(BaseModel):
+    review: dict[str, object]
+    selected_papers: list[str]
+
+
+class ExplanationRequest(BaseModel):
+    paper_ids: list[str] | None = None
+    level: ExplainLevel = "intermediate"
+
+
+class ExplanationResponse(BaseModel):
+    explanation: dict[str, object]
+    selected_papers: list[str]
+    level: ExplainLevel

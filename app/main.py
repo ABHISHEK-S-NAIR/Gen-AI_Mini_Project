@@ -8,7 +8,15 @@ from fastapi.staticfiles import StaticFiles
 from app.config import settings, update_settings
 from app.core.errors import ERRORS
 from app.core.state import state
-from app.models.schemas import ConfigResponse, ConfigUpdateRequest, TaskRequest, TaskResponse
+from app.models.schemas import (
+    AnalysisRequest, AnalysisResponse,
+    CitationRequest, CitationResponse,
+    ConfigResponse, ConfigUpdateRequest,
+    ExplanationRequest, ExplanationResponse,
+    QARequest, QAResponse,
+    ReviewRequest, ReviewResponse,
+    TaskRequest, TaskResponse,
+)
 from app.services.doc_selection_agent import select_documents
 from app.services.input_handler import ingest_files
 from app.services.output_formatter import format_task_output
@@ -46,6 +54,10 @@ async def ingest(files: list[UploadFile] = File(...)) -> dict[str, object]:
 
 @app.post("/task", response_model=TaskResponse)
 def run_task(req: TaskRequest) -> TaskResponse:
+    """
+    Legacy unified task endpoint. 
+    Prefer using dedicated endpoints: /api/qa, /api/citations, etc.
+    """
     if not state.papers:
         raise HTTPException(status_code=400, detail={"code": "E008", "message": "NO_PAPERS_INGESTED"})
 
@@ -75,6 +87,137 @@ def run_task(req: TaskRequest) -> TaskResponse:
 
     formatted = format_task_output(req.task, selected, result)
     return TaskResponse(task=req.task, selected_papers=selected, result=formatted)
+
+
+def _get_selected_papers(paper_ids: list[str] | None) -> list[str]:
+    """Helper to resolve paper selection with fallback to state."""
+    if paper_ids:
+        # Validate provided paper IDs
+        invalid_ids = [pid for pid in paper_ids if pid not in state.papers]
+        if invalid_ids:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "E012", "message": f"Invalid paper IDs: {invalid_ids}"}
+            )
+        return paper_ids
+    
+    # Use selected papers from state
+    if state.selected_papers:
+        return list(state.selected_papers)
+    
+    raise HTTPException(
+        status_code=400,
+        detail={"code": "E013", "message": "No papers selected. Provide paper_ids or select papers first."}
+    )
+
+
+@app.post("/api/qa", response_model=QAResponse)
+def answer_question(req: QARequest) -> QAResponse:
+    """
+    Dedicated Q&A endpoint with specific validation.
+    Answer questions about research papers using RAG.
+    """
+    if not state.papers:
+        raise HTTPException(status_code=400, detail={"code": "E008", "message": "NO_PAPERS_INGESTED"})
+    
+    if not req.question or not req.question.strip():
+        raise HTTPException(status_code=400, detail={"code": "E011", "message": "QUESTION_REQUIRED"})
+    
+    selected = _get_selected_papers(req.paper_ids)
+    
+    from app.services.qa_service import answer_question_with_sections
+    result = answer_question_with_sections(req.question, selected, req.sections)
+    
+    return QAResponse(
+        question=result["question"],
+        answer=result["answer"],
+        context=result["context"],
+        grounded=result["grounded"],
+        confidence=result.get("confidence"),
+        avg_relevance=result.get("avg_relevance"),
+        selected_papers=selected,
+    )
+
+
+@app.post("/api/citations", response_model=CitationResponse)
+def analyze_citations(req: CitationRequest) -> CitationResponse:
+    """
+    Dedicated citation analysis endpoint.
+    Extract and analyze citations from research papers.
+    """
+    if not state.papers:
+        raise HTTPException(status_code=400, detail={"code": "E008", "message": "NO_PAPERS_INGESTED"})
+    
+    selected = _get_selected_papers(req.paper_ids)
+    
+    from app.services.citation_service import analyse_citations_for_papers
+    result = analyse_citations_for_papers(selected)
+    
+    return CitationResponse(
+        citations=result.get("all_citations", []),
+        selected_papers=selected,
+    )
+
+
+@app.post("/api/analysis", response_model=AnalysisResponse)
+def analyze_papers(req: AnalysisRequest) -> AnalysisResponse:
+    """
+    Dedicated analysis endpoint.
+    Generate comprehensive analysis of research papers.
+    """
+    if not state.papers:
+        raise HTTPException(status_code=400, detail={"code": "E008", "message": "NO_PAPERS_INGESTED"})
+    
+    selected = _get_selected_papers(req.paper_ids)
+    
+    from app.services.analysis_service import analyse
+    result = analyse(selected)
+    
+    return AnalysisResponse(
+        analysis=result,
+        selected_papers=selected,
+    )
+
+
+@app.post("/api/review", response_model=ReviewResponse)
+def review_papers(req: ReviewRequest) -> ReviewResponse:
+    """
+    Dedicated peer review endpoint.
+    Generate peer review feedback for research papers.
+    """
+    if not state.papers:
+        raise HTTPException(status_code=400, detail={"code": "E008", "message": "NO_PAPERS_INGESTED"})
+    
+    selected = _get_selected_papers(req.paper_ids)
+    
+    from app.services.review_service import review
+    result = review(selected)
+    
+    return ReviewResponse(
+        review=result,
+        selected_papers=selected,
+    )
+
+
+@app.post("/api/explain", response_model=ExplanationResponse)
+def explain_papers(req: ExplanationRequest) -> ExplanationResponse:
+    """
+    Dedicated explanation endpoint.
+    Generate explanations of research papers at different expertise levels.
+    """
+    if not state.papers:
+        raise HTTPException(status_code=400, detail={"code": "E008", "message": "NO_PAPERS_INGESTED"})
+    
+    selected = _get_selected_papers(req.paper_ids)
+    
+    from app.services.explanation_service import explain
+    result = explain(selected, req.level)
+    
+    return ExplanationResponse(
+        explanation=result,
+        selected_papers=selected,
+        level=req.level,
+    )
 
 
 @app.get("/config", response_model=ConfigResponse)
@@ -135,7 +278,7 @@ def update_paper_selection(req: dict[str, list[str]]) -> dict[str, object]:
         )
     
     # Update selected papers
-    state.selected_papers = set(paper_ids)
+    state.set_selected_papers(paper_ids)
     
     return {
         "selected_count": len(state.selected_papers),

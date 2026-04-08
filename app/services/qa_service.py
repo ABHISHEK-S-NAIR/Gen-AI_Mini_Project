@@ -4,12 +4,16 @@ from app.config import settings
 from app.core.errors import ERRORS
 from app.core.state import state
 from app.services.embedding_engine import embed_texts
-from app.services.llm_client import call_llm
+from app.services.llm_client import call_llm, LLMUnavailableError
+from app.utils.cache import DiskCache
 
 logger = logging.getLogger(__name__)
 
 # Minimum cosine similarity score for context chunks to be considered relevant
 RELEVANCE_THRESHOLD = 0.25  # Tuned for SciBERT embeddings
+
+# Cache for Q&A results (1 hour TTL)
+_qa_cache = DiskCache(cache_dir="./cache/qa", max_age_seconds=3600)
 
 _SYSTEM_PROMPT = (
     "You are a research paper assistant. Answer questions strictly based on the "
@@ -52,6 +56,10 @@ def _build_context_block(rows: list[dict]) -> str:
 
 
 def _ask_llm(question: str, context_block: str, rows: list[dict]) -> str:
+    """
+    Ask LLM to answer question based on context.
+    Raises LLMUnavailableError if all providers fail.
+    """
     prompt = (
         f"Using only the excerpts below, answer the following question.\n\n"
         f"Question: {question}\n\n"
@@ -59,13 +67,7 @@ def _ask_llm(question: str, context_block: str, rows: list[dict]) -> str:
         f"Answer concisely. If the excerpts do not contain enough information, "
         f"say: 'The provided excerpts do not contain sufficient information to answer this question.'"
     )
-    try:
-        return call_llm(prompt, system=_SYSTEM_PROMPT, max_tokens=512, temperature=0.2)
-    except Exception as e:
-        logger.warning(f"LLM call failed in qa_service, falling back to raw context: {e}")
-        # Graceful degradation: return truncated raw context
-        raw = " ".join(str(r["text"]) for r in rows if "text" in r)
-        return raw[:600]
+    return call_llm(prompt, system=_SYSTEM_PROMPT, max_tokens=512, temperature=0.2)
 
 
 def answer_question(question: str, paper_ids: list[str]) -> dict[str, object]:
@@ -78,11 +80,21 @@ def answer_question_with_sections(
     sections: list[str] | None,
 ) -> dict[str, object]:
     """
-    Answer a question using RAG with relevance filtering.
+    Answer a question using RAG with relevance filtering and caching.
     
     Retrieves semantically similar chunks, filters by relevance threshold,
     and generates an answer using LLM with grounding verification.
+    Results are cached for 1 hour to improve performance.
     """
+    # Create cache key from question + papers + sections
+    cache_key = f"qa:{question}:{sorted(paper_ids)}:{sorted(sections) if sections else 'all'}"
+    
+    # Check cache first
+    cached = _qa_cache.get(cache_key)
+    if cached is not None:
+        logger.info(f"Cache hit for question: {question[:50]}...")
+        return cached
+    
     query_vec = embed_texts([question], settings.embedding_dim)[0]
     
     # Retrieve more candidates than needed to allow filtering
@@ -123,23 +135,40 @@ def answer_question_with_sections(
     rows = relevant_rows[:settings.top_k_chunks]
     
     context_block = _build_context_block(rows)
-    answer = _ask_llm(question, context_block, rows)
+    
+    # Try to get LLM answer, with fallback on failure
+    try:
+        answer = _ask_llm(question, context_block, rows)
+    except LLMUnavailableError as e:
+        logger.error(f"LLM unavailable: {e}")
+        # Return error with fallback to extracted relevant sentences
+        return {
+            "question": question,
+            "answer": "LLM service unavailable. Unable to generate answer.",
+            "context": rows,
+            "grounded": False,
+            "confidence": 0.0,
+            "error": {
+                "code": "E006",
+                "message": "LLM service unavailable. Please configure GROQ_API_KEY, GEMINI_API_KEY, or OPENROUTER_API_KEY."
+            },
+            "fallback_context": _extract_top_sentences(rows, max_sentences=3),
+        }
     
     # Verify answer grounding
     avg_relevance = sum(r.get("score", 0) for r in rows) / len(rows)
     confidence = min(avg_relevance * 1.2, 1.0)  # Scale up slightly, cap at 1.0
     
-    # Check if answer indicates insufficient information or LLM failure
+    # Check if answer indicates insufficient information
     insufficient_indicators = [
         "do not contain sufficient",
         "cannot be found",
         "not enough information",
         "excerpts do not",
-        "[LLM_UNAVAILABLE",  # LLM stub response
     ]
     is_grounded = not any(ind in answer for ind in insufficient_indicators)
 
-    return {
+    result = {
         "question": question,
         "answer": answer,
         "context": rows,
@@ -147,3 +176,19 @@ def answer_question_with_sections(
         "confidence": round(confidence, 2),
         "avg_relevance": round(avg_relevance, 2),
     }
+    
+    # Cache the result
+    _qa_cache.set(cache_key, result)
+    
+    return result
+
+
+def _extract_top_sentences(rows: list[dict], max_sentences: int = 3) -> str:
+    """Extract most relevant sentences as fallback when LLM unavailable."""
+    sentences = []
+    for row in rows[:max_sentences]:
+        text = row.get("text", "")
+        # Take first sentence or 200 chars
+        first_sent = text.split(". ")[0] if ". " in text else text[:200]
+        sentences.append(first_sent)
+    return " ... ".join(sentences)

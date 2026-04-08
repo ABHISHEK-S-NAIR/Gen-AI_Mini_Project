@@ -30,13 +30,13 @@ async def ingest_files(files: list[UploadFile]) -> dict[str, object]:
 
         paper_id = str(uuid.uuid4())
         paper = IngestedPaper(paper_id=paper_id, filename=uploaded.filename or "unknown.pdf", raw_text=raw_text)
-        state.papers[paper_id] = paper
+        state.add_paper(paper_id, paper)
         ingested.append(paper)
 
         sections = detect_sections(raw_text)
         if not any(sections[s].strip() for s in ("abstract", "intro", "method", "results", "conclusion")):
             return {"error": ERRORS["E002"].__dict__}
-        state.sections[paper_id] = sections
+        state.add_sections(paper_id, sections)
 
         chunks = chunk_sections(
             paper_id=paper_id,
@@ -49,7 +49,7 @@ async def ingest_files(files: list[UploadFile]) -> dict[str, object]:
             vectors = embed_texts([c.text for c in chunks], settings.embedding_dim)
             for c, v in zip(chunks, vectors, strict=True):
                 c.embedding = v
-            state.chunks[paper_id] = chunks
+            state.add_chunks(paper_id, chunks)
             state.vdb.upsert(
                 [
                     {
@@ -66,9 +66,9 @@ async def ingest_files(files: list[UploadFile]) -> dict[str, object]:
 
         abstract_text = sections.get("abstract", "")
         paper_seed = abstract_text if abstract_text.strip() else raw_text[:3000]
-        state.paper_embeddings[paper_id] = embed_texts([paper_seed], settings.embedding_dim)[0]
+        state.add_embedding(paper_id, embed_texts([paper_seed], settings.embedding_dim)[0])
         
         # Auto-select newly ingested papers
-        state.selected_papers.add(paper_id)
+        state.add_selected_paper(paper_id)
 
     return {"papers": [p.model_dump() for p in ingested]}
