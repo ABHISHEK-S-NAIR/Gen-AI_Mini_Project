@@ -1,0 +1,27 @@
+[
+  {
+    "question": "What is the main contribution of this paper?",
+    "gold_answer": "FILL IN FROM PAPER",
+    "category": "abstractive"
+  },
+  {
+    "question": "What dataset was used for evaluation?",
+    "gold_answer": "FILL IN FROM PAPER",
+    "category": "extractive"
+  },
+  {
+    "question": "What BLEU score did the model achieve?",
+    "gold_answer": "FILL IN FROM PAPER",
+    "category": "extractive"
+  },
+  {
+    "question": "Does the paper use a transformer architecture?",
+    "gold_answer": "FILL IN FROM PAPER",
+    "category": "yes_no"
+  },
+  {
+    "question": "What are the limitations of the proposed approach?",
+    "gold_answer": "FILL IN FROM PAPER",
+    "category": "abstractive"
+  }
+]
