@@ -77,6 +77,8 @@ class QARequest(BaseModel):
     question: str
     paper_ids: list[str] | None = None
     sections: list[SectionName] | None = None
+    conversation_id: str | None = None
+    debug: bool = False
 
 
 class QAResponse(BaseModel):
@@ -87,6 +89,8 @@ class QAResponse(BaseModel):
     confidence: float | None = None
     avg_relevance: float | None = None
     selected_papers: list[str]
+    cited_excerpts: list[int] = Field(default_factory=list)
+    cited_chunks: list[dict] = Field(default_factory=list)
 
 
 class CitationRequest(BaseModel):

@@ -15,35 +15,76 @@ class LLMUnavailableError(Exception):
     pass
 
 
-def _call_groq(prompt: str, system: str, max_tokens: int, temperature: float) -> str:
+def _call_groq(
+    prompt: str,
+    system: str,
+    max_tokens: int,
+    temperature: float,
+    messages: list[dict] | None = None,
+) -> str:
     from groq import Groq
     client = Groq(api_key=os.environ["GROQ_API_KEY"])
+    payload_messages = messages if messages is not None else [
+        {"role": "system", "content": system},
+        {"role": "user", "content": prompt},
+    ]
     response = client.chat.completions.create(
         model="llama-3.1-8b-instant",
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": prompt},
-        ],
+        messages=payload_messages,
         max_tokens=max_tokens,
         temperature=temperature,
     )
     return response.choices[0].message.content
 
 
-def _call_gemini(prompt: str, system: str, max_tokens: int, temperature: float) -> str:
+def _call_gemini(
+    prompt: str,
+    system: str,
+    max_tokens: int,
+    temperature: float,
+    messages: list[dict] | None = None,
+) -> str:
     import google.generativeai as genai
+
+    system_instruction = system
+    content = prompt
+    if messages is not None:
+        system_messages = [m.get("content", "") for m in messages if m.get("role") == "system"]
+        if system_messages:
+            system_instruction = "\n\n".join(system_messages)
+
+        gemini_messages: list[dict] = []
+        for msg in messages:
+            role = msg.get("role")
+            if role == "system":
+                continue
+            gemini_role = "model" if role == "assistant" else "user"
+            gemini_messages.append({"role": gemini_role, "parts": [msg.get("content", "")]})
+        content = gemini_messages or prompt
+
     genai.configure(api_key=os.environ["GEMINI_API_KEY"])
     model = genai.GenerativeModel(
         model_name="gemini-1.5-flash",
-        system_instruction=system if system else None,
+        system_instruction=system_instruction if system_instruction else None,
         generation_config={"max_output_tokens": max_tokens, "temperature": temperature},
     )
-    response = model.generate_content(prompt)
+    response = model.generate_content(content)
     return response.text
 
 
-def _call_openrouter(prompt: str, system: str, max_tokens: int, temperature: float) -> str:
+def _call_openrouter(
+    prompt: str,
+    system: str,
+    max_tokens: int,
+    temperature: float,
+    messages: list[dict] | None = None,
+) -> str:
     import httpx
+
+    payload_messages = messages if messages is not None else [
+        {"role": "system", "content": system},
+        {"role": "user", "content": prompt},
+    ]
     response = httpx.post(
         "https://openrouter.ai/api/v1/chat/completions",
         headers={
@@ -53,10 +94,7 @@ def _call_openrouter(prompt: str, system: str, max_tokens: int, temperature: flo
         },
         json={
             "model": "mistralai/mistral-7b-instruct",
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": prompt},
-            ],
+            "messages": payload_messages,
             "max_tokens": max_tokens,
             "temperature": temperature,
         },
@@ -71,6 +109,7 @@ def call_llm(
     system: str = "You are a helpful research assistant.",
     max_tokens: int = 1024,
     temperature: float = 0.3,
+    messages: list[dict] | None = None,
 ) -> str:
     """
     Call the available LLM provider and return the response as a string.
@@ -88,7 +127,7 @@ def call_llm(
     for name, fn in providers:
         try:
             logger.debug(f"Calling LLM via {name}")
-            return fn(prompt, system, max_tokens, temperature)
+            return fn(prompt, system, max_tokens, temperature, messages=messages)
         except Exception as e:
             logger.warning(f"{name} call failed: {e}. Trying next provider.")
 

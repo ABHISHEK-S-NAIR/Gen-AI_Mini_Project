@@ -126,7 +126,13 @@ def answer_question(req: QARequest) -> QAResponse:
     selected = _get_selected_papers(req.paper_ids)
     
     from app.services.qa_service import answer_question_with_sections
-    result = answer_question_with_sections(req.question, selected, req.sections)
+    result = answer_question_with_sections(
+        req.question,
+        selected,
+        req.sections,
+        conversation_id=req.conversation_id,
+        debug=req.debug,
+    )
     
     return QAResponse(
         question=result["question"],
@@ -136,7 +142,15 @@ def answer_question(req: QARequest) -> QAResponse:
         confidence=result.get("confidence"),
         avg_relevance=result.get("avg_relevance"),
         selected_papers=selected,
+        cited_excerpts=result.get("cited_excerpts", []),
+        cited_chunks=result.get("cited_chunks", []),
     )
+
+
+@app.delete("/api/qa/conversation/{conversation_id}")
+def clear_qa_conversation(conversation_id: str) -> dict[str, bool]:
+    state.clear_conversation(conversation_id)
+    return {"cleared": True}
 
 
 @app.post("/api/citations", response_model=CitationResponse)

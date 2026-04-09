@@ -16,6 +16,7 @@ class AppState:
         self._paper_embeddings: dict[str, list[float]] = {}
         self._vdb = InMemoryVectorDB()
         self._selected_papers: set[str] = set()
+        self._conversations: dict[str, list[dict]] = {}
 
     @property
     def papers(self) -> dict[str, IngestedPaper]:
@@ -117,6 +118,23 @@ class AppState:
         with self._lock:
             self._selected_papers = set(paper_ids)
 
+    def get_conversation(self, conversation_id: str) -> list[dict]:
+        """Thread-safe get conversation history; returns empty list if absent."""
+        with self._lock:
+            return self._conversations.get(conversation_id, []).copy()
+
+    def append_to_conversation(self, conversation_id: str, role: str, content: str) -> None:
+        """Thread-safe append message to a conversation."""
+        with self._lock:
+            if conversation_id not in self._conversations:
+                self._conversations[conversation_id] = []
+            self._conversations[conversation_id].append({"role": role, "content": content})
+
+    def clear_conversation(self, conversation_id: str) -> None:
+        """Thread-safe clear a conversation history."""
+        with self._lock:
+            self._conversations.pop(conversation_id, None)
+
     def clear(self) -> None:
         """Thread-safe clear all state."""
         with self._lock:
@@ -126,6 +144,7 @@ class AppState:
             self._paper_embeddings.clear()
             self._vdb = InMemoryVectorDB()
             self._selected_papers.clear()
+            self._conversations.clear()
 
 
 state = AppState()
