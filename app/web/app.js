@@ -94,7 +94,6 @@ function renderResult(data) {
             `Methodology\n${item.methodology || "N/A"}\n\n` +
             `Key Idea\n${item.key_idea || "N/A"}\n\n` +
             `Results\n${item.results || "N/A"}\n\n` +
-            `Text Diagram\n${item.text_diagram || "N/A"}\n\n` +
             `Citation Insight\n${item.citation_insight || "N/A"}`
           );
         })
@@ -121,9 +120,6 @@ function renderResult(data) {
         });
 
     parts.push(`Comparative Analysis\n\n${payload.comparison || payload.comparative_analysis || "N/A"}`);
-    parts.push(`Insight Summary\n${payload.insight_summary || "N/A"}`);
-    parts.push(`Why It Matters\n${payload.why_it_matters || "N/A"}`);
-    parts.push(`Evolution\n${payload.evolution || "N/A"}`);
 
     readable.textContent = parts.join("\n\n------------------------------\n\n");
     return;

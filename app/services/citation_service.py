@@ -80,6 +80,12 @@ ARXIV_PATTERN = re.compile(r"arXiv:\S+", re.IGNORECASE)
 SECTION_HEADING_INLINE_PATTERN = re.compile(r"\s\d+(?:\.\d+)*\s+[A-Z][A-Za-z-]{2,}")
 
 
+def _default_canonical_key(raw_text: str) -> str:
+    lowered = (raw_text or "").lower().strip()
+    cleaned = re.sub(r"[^a-z0-9]+", "", lowered)
+    return cleaned or lowered or "unknown"
+
+
 def _normalize_text(text: str) -> str:
     # Common PDF artifacts cleanup: soft hyphenation, ligatures, and line breaks.
     text = text.replace("\ufb00", "ff").replace("\ufb01", "fi").replace("\ufb02", "fl")
@@ -235,7 +241,162 @@ def analyse_citations(paper_id: str) -> dict[str, object]:
     if not citations:
         return {"citations": [], "error": ERRORS["E007"].__dict__}
 
+    citations = deduplicate_citations(citations)
+    citations = enrich_citations_with_llm(citations)
     return {"citations": citations}
+
+
+def deduplicate_citations(citations: list[dict]) -> list[dict]:
+    """
+    Embeds each citation's raw_text and clusters citations whose cosine
+    similarity > 0.9 as the same work. Within each cluster, keeps the
+    citation with the longest context string as the canonical one, and
+    adds a "duplicate_of" key (pointing to the canonical raw_text) on
+    all others. Citations with no near-neighbour get duplicate_of=None.
+
+    Works on the full list regardless of size.
+    Falls back to returning the original list unchanged if embedding fails.
+    """
+    if len(citations) < 2:
+        return [{**dict(c), "duplicate_of": c.get("duplicate_of", None)} for c in citations]
+
+    try:
+        from app.config import settings
+        from app.services.embedding_engine import cosine_similarity, embed_texts
+
+        texts = [c.get("raw_text", "") for c in citations]
+        vectors = embed_texts(texts, settings.embedding_dim)
+
+        parent = list(range(len(citations)))
+
+        def find(x: int) -> int:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(a: int, b: int) -> None:
+            parent[find(a)] = find(b)
+
+        for i in range(len(vectors)):
+            for j in range(i + 1, len(vectors)):
+                if cosine_similarity(vectors[i], vectors[j]) > 0.9:
+                    union(i, j)
+
+        clusters: dict[int, list[int]] = {}
+        for i in range(len(citations)):
+            root = find(i)
+            clusters.setdefault(root, []).append(i)
+
+        result = [dict(c) for c in citations]
+        for members in clusters.values():
+            if len(members) == 1:
+                result[members[0]]["duplicate_of"] = None
+                continue
+            canonical_idx = max(members, key=lambda i: len(citations[i].get("context", "")))
+            canonical_raw = citations[canonical_idx].get("raw_text", "")
+            for idx in members:
+                if idx == canonical_idx:
+                    result[idx]["duplicate_of"] = None
+                else:
+                    result[idx]["duplicate_of"] = canonical_raw
+
+        return result
+
+    except Exception:
+        return [{**dict(c), "duplicate_of": c.get("duplicate_of", None)} for c in citations]
+
+
+def enrich_citations_with_llm(citations: list[dict]) -> list[dict]:
+    """
+    Takes the top 20 extracted citations and uses LLM to enrich each with:
+      - claim: what specific claim this citation supports or challenges
+      - relationship: one of "foundational" | "incremental" | "contradicting"
+      - canonical_key: a normalised author-year string used for deduplication
+        e.g. "(Vaswani et al., 2017)" and "[1]" both map to "vaswani2017"
+        If not determinable, use the raw_text lowercased stripped of punctuation.
+
+    Returns the same list with three new keys added to each dict.
+    Falls back gracefully — if LLM call fails or JSON parse fails,
+    return the original list with claim="", relationship="neutral",
+    canonical_key=raw_text.lower() for each item.
+    """
+    if not citations:
+        return citations
+
+    def with_defaults(items: list[dict]) -> list[dict]:
+        out = []
+        for c in items:
+            base = dict(c)
+            base.setdefault("claim", "")
+            base.setdefault("relationship", base.get("type", "neutral"))
+            base.setdefault("canonical_key", _default_canonical_key(base.get("raw_text", "")))
+            out.append(base)
+        return out
+
+    top = citations[:20]
+
+    numbered = "\n".join(
+        f"{i+1}. raw_text={c.get('raw_text', '')} | context={str(c.get('context', ''))[:120]}"
+        for i, c in enumerate(top)
+    )
+
+    prompt = (
+        "You are analyzing citations extracted from a research paper.\n\n"
+        "For each numbered citation below, return a JSON array where each element has:\n"
+        '  "index": (1-based integer matching the input number),\n'
+        '  "claim": (one sentence - the specific claim this citation supports or challenges,\n'
+        '            inferred from its context. Empty string if unclear.),\n'
+        '  "relationship": (exactly one of: "foundational", "incremental", "contradicting"),\n'
+        '  "canonical_key": (a short normalised key like "vaswani2017" or "smith2020b"\n'
+        '                    for deduplication. Use lastname+year, lowercase, no spaces.\n'
+        '                    If numeric like [1], use "ref1". If unknown, use "unknown".)\n\n'
+        "Return ONLY the JSON array. No markdown fences. No extra text.\n\n"
+        f"Citations:\n{numbered}"
+    )
+
+    system = (
+        "You are a precise academic citation analyst. "
+        "Return only valid JSON arrays, no commentary."
+    )
+
+    try:
+        from app.services.llm_client import call_llm_json
+
+        enrichments = call_llm_json(prompt, system=system, max_tokens=1200)
+        if not isinstance(enrichments, list):
+            raise ValueError("Expected a JSON array")
+
+        enrichment_map = {e["index"]: e for e in enrichments if isinstance(e, dict) and "index" in e}
+
+        enriched = []
+        for i, c in enumerate(citations):
+            base = dict(c)
+            if i < 20 and (i + 1) in enrichment_map:
+                e = enrichment_map[i + 1]
+                rel = e.get("relationship", base.get("type", "neutral"))
+                if rel not in ("foundational", "incremental", "contradicting", "neutral"):
+                    rel = base.get("type", "neutral")
+                base["claim"] = e.get("claim", "")
+                base["relationship"] = rel
+                base["canonical_key"] = e.get("canonical_key", _default_canonical_key(base.get("raw_text", "")))
+            else:
+                base.setdefault("claim", "")
+                base.setdefault("relationship", base.get("type", "neutral"))
+                base.setdefault("canonical_key", _default_canonical_key(base.get("raw_text", "")))
+            enriched.append(base)
+
+        return enriched
+
+    except Exception:
+        fallback = []
+        for c in citations:
+            base = dict(c)
+            base.setdefault("claim", "")
+            base.setdefault("relationship", "neutral")
+            base.setdefault("canonical_key", _default_canonical_key(base.get("raw_text", "")))
+            fallback.append(base)
+        return fallback
 
 
 def analyse_citations_for_papers(paper_ids: list[str]) -> dict[str, object]:
@@ -260,5 +421,6 @@ def analyse_citations_for_papers(paper_ids: list[str]) -> dict[str, object]:
 
     return {
         "papers": papers_output,
+        "all_citations": [c for p in papers_output for c in p.get("citations", [])],
         "total_citations": total,
     }

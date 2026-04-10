@@ -1,7 +1,15 @@
+import os
+
 from app.core.state import state
 from app.services.citation_service import analyse_citations_for_papers
+from app.services.llm_client import call_llm_json
 from app.services.structured_extraction_service import extract_structured_for_papers
-from app.services.summarization_engine import summarize, summarize_multiple
+
+
+_ANALYSIS_SYSTEM = (
+    "You are a precise research-paper analyst. "
+    "Use only provided text and return strict JSON without markdown fences."
+)
 
 
 def _sanitize_analysis_text(text: str) -> str:
@@ -16,7 +24,20 @@ def _sanitize_analysis_text(text: str) -> str:
     }
     for bad, repl in forbidden.items():
         lowered = lowered.replace(bad, repl).replace(bad.capitalize(), repl)
+    lowered = lowered.replace("- ", "")
+    lowered = lowered.replace(" -", "-")
+    lowered = lowered.replace("\n", " ")
+    lowered = lowered.replace("\t", " ")
+    lowered = lowered.strip()
+    lowered = lowered.lstrip("0123456789. ")
     return " ".join(lowered.split())
+
+
+def _trim_words(text: str, max_words: int = 180) -> str:
+    words = (text or "").split()
+    if len(words) <= max_words:
+        return " ".join(words)
+    return " ".join(words[:max_words]) + " ..."
 
 
 def _diagram_for(technique: str) -> str:
@@ -72,7 +93,10 @@ def _comparison_block(structured_items: list[dict[str, str]]) -> str:
     return "\n".join(lines)
 
 
-def _insight_summary(structured_items: list[dict[str, str]]) -> dict[str, str]:
+def _insight_summary(
+    structured_items: list[dict[str, str]],
+    analyses: list[dict[str, str]] | None = None,
+) -> dict[str, str]:
     if not structured_items:
         return {
             "insight_summary": "No structured data available.",
@@ -83,9 +107,15 @@ def _insight_summary(structured_items: list[dict[str, str]]) -> dict[str, str]:
     if len(structured_items) == 1:
         s = structured_items[0]
         metrics_str = ", ".join(s.get('metrics', [])[:3]) if s.get('metrics') else "no explicit metrics"
+        analysis_item = analyses[0] if analyses else {}
+        key_idea = _sanitize_analysis_text(analysis_item.get("key_idea", "") or s.get("novelty", ""))
+        summary = _sanitize_analysis_text(analysis_item.get("summary", "") or s.get("problem", ""))
         return {
-            "insight_summary": f"The core contribution is {s['novelty']}",
-            "why_it_matters": f"It matters because it targets {s['problem']} with measurable signal {metrics_str}.",
+            "insight_summary": f"The core contribution is {key_idea or 'not clearly specified in the paper'}.",
+            "why_it_matters": (
+                f"It matters because it targets {summary or 'the stated research problem'} "
+                f"with measurable signal {metrics_str}."
+            ),
             "evolution": f"Prior baselines -> {s['title']} -> follow-up methods in the same task family.",
         }
 
@@ -127,65 +157,73 @@ def _summarize_paper_fields(paper_id: str, structured: dict) -> dict[str, str]:
     intro_text = sections.get("intro", "").strip()
     conclusion_text = sections.get("conclusion", "").strip()
 
-    # Prepare all inputs for batch summarization
-    inputs = []
-    fallbacks = []
-    
-    # Summary: abstract + intro give the best overview
-    summary_input = " ".join(filter(None, [abstract_text, intro_text]))
-    if not summary_input:
-        summary_input = f"{structured['problem']} {structured['proposed_method']}"
-    inputs.append(summary_input)
-    fallbacks.append(_sanitize_analysis_text(
-        f"The paper addresses {structured['problem']} and proposes {structured['proposed_method']}."
-    ))
-
-    # Methodology: method section is the ground truth
-    methodology_input = method_text or f"{structured['core_technique']} {structured['learning_strategy']}"
-    inputs.append(methodology_input)
-    fallbacks.append(_sanitize_analysis_text(
-        f"The method is organized around {structured['core_technique']} with a {structured['learning_strategy']} strategy."
-    ))
-
-    # Key idea: abstract is usually the most distilled statement of novelty
-    key_idea_input = abstract_text or structured['novelty']
-    if len(key_idea_input.split()) > 30:
-        inputs.append(key_idea_input)
-        fallbacks.append(_sanitize_analysis_text(f"The central idea is {structured['novelty']}."))
-    else:
-        # Short enough, don't summarize
-        inputs.append("")  # empty placeholder
-        fallbacks.append(key_idea_input)
-
-    # Results: results section directly
+    # Results fallback helper text
     metrics_str = ", ".join(structured.get('metrics', [])[:3]) if structured.get('metrics') else ""
-    results_input = " ".join(filter(None, [results_text, conclusion_text]))
-    if not results_input:
-        results_input = f"{structured['results']} {metrics_str}"
-    inputs.append(results_input)
-    fallbacks.append(_sanitize_analysis_text(f"Reported results indicate {structured['results']} with metric evidence {metrics_str}."))
-    
-    # Batch summarize all at once
-    try:
-        summaries = summarize_multiple(inputs)
-        # Use fallbacks for empty results or failures
-        summary = summaries[0] if summaries[0] else fallbacks[0]
-        methodology = summaries[1] if summaries[1] else fallbacks[1]
-        key_idea = summaries[2] if summaries[2] else fallbacks[2]
-        results_summary = summaries[3] if summaries[3] else fallbacks[3]
-    except Exception as e:
-        # Complete fallback to template strings
-        summary = fallbacks[0]
-        methodology = fallbacks[1]
-        key_idea = fallbacks[2]
-        results_summary = fallbacks[3]
 
-    return {
-        "summary": summary,
-        "methodology": methodology,
-        "key_idea": key_idea,
-        "results": results_summary,
+    fallback = {
+        "summary": _sanitize_analysis_text(
+            f"The paper addresses {structured['problem']} and proposes {structured['proposed_method']}."
+        ),
+        "methodology": _sanitize_analysis_text(
+            f"The method is organized around {structured['proposed_method']} with a {structured['learning_strategy']} strategy."
+        ),
+        "key_idea": _sanitize_analysis_text(f"The central idea is {structured['novelty']}.") or structured.get("novelty", ""),
+        "results": _sanitize_analysis_text(
+            f"Reported results indicate {structured['results']} with metric evidence {metrics_str}."
+        ),
     }
+
+    # Keep prompt compact to stay under provider token/request limits.
+    compact_abstract = _trim_words(abstract_text, 160)
+    compact_intro = _trim_words(intro_text, 140)
+    compact_method = _trim_words(method_text, 220)
+    compact_results = _trim_words(results_text, 180)
+    compact_conclusion = _trim_words(conclusion_text, 120)
+
+    prompt = (
+        "Analyze this paper content and return a JSON object with exactly these keys: "
+        '"summary", "methodology", "key_idea", "results".\n\n'
+        "Requirements:\n"
+        "- Each value should be concise (1-3 sentences).\n"
+        "- Methodology must describe concrete procedure, not generic wording.\n"
+        "- If a detail is unclear from text, say 'not clearly specified in the paper'.\n"
+        "- Use only given content.\n\n"
+        f"Extracted fields:\n"
+        f"problem={structured.get('problem', '')}\n"
+        f"proposed_method={structured.get('proposed_method', '')}\n"
+        f"core_technique={structured.get('core_technique', '')}\n"
+        f"learning_strategy={structured.get('learning_strategy', '')}\n"
+        f"novelty={structured.get('novelty', '')}\n"
+        f"results={structured.get('results', '')}\n"
+        f"metrics={structured.get('metrics', [])}\n\n"
+        f"[ABSTRACT]\n{compact_abstract or 'N/A'}\n\n"
+        f"[INTRO]\n{compact_intro or 'N/A'}\n\n"
+        f"[METHOD]\n{compact_method or 'N/A'}\n\n"
+        f"[RESULTS]\n{compact_results or 'N/A'}\n\n"
+        f"[CONCLUSION]\n{compact_conclusion or 'N/A'}"
+    )
+
+    try:
+        if not (
+            os.environ.get("GROQ_API_KEY")
+            or os.environ.get("GEMINI_API_KEY")
+            or os.environ.get("OPENROUTER_API_KEY")
+        ):
+            return fallback
+
+        response = call_llm_json(prompt, system=_ANALYSIS_SYSTEM, max_tokens=500)
+        if not isinstance(response, dict):
+            return fallback
+
+        out = {
+            "summary": str(response.get("summary", "")).strip() or fallback["summary"],
+            "methodology": str(response.get("methodology", "")).strip() or fallback["methodology"],
+            "key_idea": str(response.get("key_idea", "")).strip() or fallback["key_idea"],
+            "results": str(response.get("results", "")).strip() or fallback["results"],
+        }
+        return out
+    except Exception:
+        return fallback
 
 
 
@@ -222,7 +260,6 @@ def analyse(paper_ids: list[str]) -> dict[str, object]:
                     f"Method: {methodology}\n\n"
                     f"Results: {results}"
                 ),
-                "text_diagram": _diagram_for(s["core_technique"]),
                 "citation_insight": _citation_insight_for(citation_map.get(s["paper_id"], [])),
             }
         )
@@ -259,7 +296,6 @@ def analyse(paper_ids: list[str]) -> dict[str, object]:
             }
         )
 
-    insight = _insight_summary(structured_items)
     return {
         "structured_data": [
             {
@@ -278,7 +314,4 @@ def analyse(paper_ids: list[str]) -> dict[str, object]:
         "comparison": _comparison_block(structured_items),
         "comparative_analysis": _comparison_block(structured_items),
         "reports": reports,
-        "insight_summary": insight["insight_summary"],
-        "why_it_matters": insight["why_it_matters"],
-        "evolution": insight["evolution"],
     }
