@@ -272,6 +272,130 @@ def _infer_core_technique(text: str) -> str:
     return "task-specific neural modeling"
 
 
+# Fields where a placeholder means extraction failed
+_PLACEHOLDER_SUFFIXES = (
+    "not clearly extracted",
+    "not clearly extracted",
+)
+
+
+def _is_placeholder(value: str) -> bool:
+    """Return True if the extracted value is a fallback placeholder."""
+    return (
+        not value
+        or value.strip().endswith("not clearly extracted")
+        or value.strip() == "problem not clearly extracted"
+        or value.strip() == "method not clearly extracted"
+        or value.strip() == "results not clearly extracted"
+        or value.strip() == "novelty not clearly extracted"
+        or value.strip() == "limitations not clearly extracted"
+    )
+
+
+def _llm_extract_structured(
+    paper_id: str,
+    existing: dict[str, str],
+) -> dict[str, str]:
+    """
+    LLM fallback for structured extraction. Only fills in fields where
+    existing regex extraction returned placeholders.
+
+    Builds a focused context string from available section text, then
+    calls call_llm_json asking for ONLY the fields that are still empty.
+    Merges LLM results back into existing dict and returns it.
+
+    Falls back gracefully — if LLM call fails, returns existing unchanged.
+    """
+    fields_needed = [
+        f for f in ("problem", "proposed_method", "core_technique",
+                    "results", "novelty", "limitations")
+        if _is_placeholder(existing.get(f, ""))
+    ]
+
+    if not fields_needed:
+        return existing
+
+    try:
+        from app.services.llm_client import call_llm_json
+
+        sections = state.sections.get(paper_id, {})
+
+        section_priority = {
+            "problem": ["abstract", "intro"],
+            "proposed_method": ["method", "intro"],
+            "core_technique": ["method", "abstract"],
+            "results": ["results", "conclusion"],
+            "novelty": ["intro", "abstract", "conclusion"],
+            "limitations": ["conclusion", "results"],
+        }
+
+        context_parts = []
+        seen_sections = set()
+        for field in fields_needed:
+            for sec in section_priority.get(field, ["abstract"]):
+                if sec not in seen_sections and sections.get(sec, "").strip():
+                    words = sections[sec].strip().split()
+                    context_parts.append(
+                        f"[{sec.upper()}]\n" + " ".join(words[:300])
+                    )
+                    seen_sections.add(sec)
+
+        if not context_parts:
+            return existing
+
+        context = "\n\n".join(context_parts)
+
+        field_descriptions = {
+            "problem": "The specific research problem or challenge this paper addresses (1-2 sentences)",
+            "proposed_method": "The method or approach proposed to solve the problem (1-2 sentences)",
+            "core_technique": "The single core technical technique at the heart of the method (short phrase, e.g. 'multi-head self-attention')",
+            "results": "The main empirical results or outcomes reported (1-2 sentences)",
+            "novelty": "What is genuinely new or novel about this contribution vs prior work (1-2 sentences)",
+            "limitations": "Limitations, failure cases, or future work acknowledged by the authors (1-2 sentences)",
+        }
+
+        fields_block = "\n".join(
+            f'  "{f}": {field_descriptions[f]}'
+            for f in fields_needed
+        )
+
+        prompt = (
+            "You are extracting structured metadata from a research paper.\n\n"
+            f"Return a JSON object with ONLY these keys:\n{fields_block}\n\n"
+            "Rules:\n"
+            "- Base every answer strictly on the paper text below\n"
+            "- If a field genuinely cannot be determined from the text, "
+            'use an empty string ""\n'
+            "- Return ONLY the JSON object. No markdown fences. No extra text.\n\n"
+            f"Paper text:\n{context}"
+        )
+
+        system = (
+            "You are a precise academic metadata extractor. "
+            "Return only valid JSON with string values. No commentary."
+        )
+
+        llm_result = call_llm_json(prompt, system=system, max_tokens=600)
+
+        if not isinstance(llm_result, dict):
+            return existing
+
+        updated = dict(existing)
+        for field in fields_needed:
+            llm_value = llm_result.get(field, "")
+            if isinstance(llm_value, str):
+                llm_value = llm_value.strip()
+            else:
+                llm_value = ""
+            if llm_value:
+                updated[field] = llm_value
+
+        return updated
+
+    except Exception:
+        return existing
+
+
 def extract_structured_data(paper_id: str) -> dict[str, str]:
     paper = state.papers.get(paper_id)
     sections = state.sections.get(paper_id, {})
@@ -326,7 +450,7 @@ def extract_structured_data(paper_id: str) -> dict[str, str]:
     learning_strategy = "pretraining" if "pre-train" in full_text.lower() or "pretrain" in full_text.lower() else "task-specific training"
     contribution_type = "architectural" if "architecture" in full_text.lower() else "methodological"
 
-    return {
+    extracted = {
         "paper_id": paper_id,
         "title": title,
         "problem": _phrase(problem_src) or "problem not clearly extracted",
@@ -345,6 +469,11 @@ def extract_structured_data(paper_id: str) -> dict[str, str]:
         "learning_strategy": learning_strategy,
         "contribution_type": contribution_type,
     }
+
+    # LLM fallback: fill in any fields that regex could not extract
+    extracted = _llm_extract_structured(paper_id, extracted)
+
+    return extracted
 
 
 def extract_structured_for_papers(paper_ids: list[str]) -> list[dict[str, str]]:
