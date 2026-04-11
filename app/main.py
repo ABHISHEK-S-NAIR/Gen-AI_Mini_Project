@@ -18,8 +18,10 @@ from app.models.schemas import (
     TaskRequest, TaskResponse,
 )
 from app.services.doc_selection_agent import select_documents
+from app.services.digest_service import generate_digest
 from app.services.input_handler import ingest_files
 from app.services.output_formatter import format_task_output
+from app.services.synthesis_service import find_research_gaps, generate_hypotheses
 from app.services.task_router import route_task
 
 app = FastAPI(title="PaperMind MVP", version="0.1.0")
@@ -211,6 +213,42 @@ def review_papers(req: ReviewRequest) -> ReviewResponse:
         review=result,
         selected_papers=selected,
     )
+
+
+@app.post("/api/gaps")
+def research_gaps(req: dict = None) -> dict:
+    """Find research gaps across selected papers."""
+    if not state.papers:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "E008", "message": "NO_PAPERS_INGESTED"}
+        )
+    paper_ids = list(state.selected_papers) if state.selected_papers else list(state.papers.keys())
+    return find_research_gaps(paper_ids)
+
+
+@app.post("/api/hypotheses")
+def research_hypotheses(req: dict = None) -> dict:
+    """Generate research hypotheses from selected papers."""
+    if not state.papers:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "E008", "message": "NO_PAPERS_INGESTED"}
+        )
+    paper_ids = list(state.selected_papers) if state.selected_papers else list(state.papers.keys())
+    return generate_hypotheses(paper_ids)
+
+
+@app.post("/digest")
+def session_digest(req: dict = None) -> dict:
+    """Generate a 1-page executive digest of all ingested papers."""
+    if not state.papers:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "E008", "message": "NO_PAPERS_INGESTED"}
+        )
+    paper_ids = list(state.selected_papers) if state.selected_papers else list(state.papers.keys())
+    return generate_digest(paper_ids)
 
 
 @app.post("/api/explain", response_model=ExplanationResponse)

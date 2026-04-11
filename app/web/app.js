@@ -49,6 +49,139 @@ function updateTaskInputs() {
   }
 }
 
+function setToolStatus(message, isError = false) {
+  const el = document.getElementById("tools-status");
+  if (!el) {
+    return;
+  }
+  setStatus("tools-status", message, isError);
+}
+
+async function runGapFinder() {
+  setToolStatus("Finding research gaps...");
+  try {
+    const data = await fetchJson("/api/gaps", { method: "POST" });
+    if (data.error) {
+      setToolStatus(`Error: ${data.error.message}`, true);
+      return;
+    }
+    renderGapsResult(data);
+    setToolStatus(`Found ${data.gaps.length} gaps across ${data.paper_count} paper(s).`);
+  } catch (err) {
+    setToolStatus(`Failed: ${err.message}`, true);
+  }
+}
+
+function renderGapsResult(data) {
+  const readable = document.getElementById("result-readable");
+  readable.innerHTML = "";
+
+  const header = document.createElement("div");
+  header.className = "explanation-header";
+  header.innerHTML = `<strong>Research Gaps</strong> - ${data.paper_count} paper(s) analyzed`;
+  readable.appendChild(header);
+
+  const sections = [
+    { title: "Unanswered Questions", items: data.gaps },
+    { title: "Missing Experiments", items: data.missing_experiments },
+    { title: "Follow-up Directions", items: data.followup_directions },
+  ];
+
+  for (const section of sections) {
+    if (!section.items || !section.items.length) continue;
+    const content = section.items.map((item, i) => `${i + 1}. ${item}`).join("\n");
+    readable.appendChild(createCollapsibleSection(section.title, content, true));
+  }
+
+  if (data.synthesis && !data.gaps.length) {
+    const pre = document.createElement("pre");
+    pre.style.cssText = "white-space:pre-wrap;padding:12px;font-size:0.85rem";
+    pre.textContent = data.synthesis;
+    readable.appendChild(pre);
+  }
+
+  document.getElementById("result-json").textContent = JSON.stringify(data, null, 2);
+}
+
+async function runHypotheses() {
+  setToolStatus("Generating hypotheses...");
+  try {
+    const data = await fetchJson("/api/hypotheses", { method: "POST" });
+    if (data.error) {
+      setToolStatus(`Error: ${data.error.message}`, true);
+      return;
+    }
+    renderHypothesesResult(data);
+    setToolStatus(`Generated ${data.hypotheses.length} hypotheses from ${data.paper_count} paper(s).`);
+  } catch (err) {
+    setToolStatus(`Failed: ${err.message}`, true);
+  }
+}
+
+function renderHypothesesResult(data) {
+  const readable = document.getElementById("result-readable");
+  readable.innerHTML = "";
+
+  const header = document.createElement("div");
+  header.className = "explanation-header";
+  header.innerHTML = `<strong>Research Hypotheses</strong> - ${data.paper_count} paper(s)`;
+  readable.appendChild(header);
+
+  data.hypotheses.forEach((h, idx) => {
+    const content = [
+      h.description ? `Description:\n${h.description}` : "",
+      h.rationale ? `Rationale:\n${h.rationale}` : "",
+      h.testability ? `How to test:\n${h.testability}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+
+    readable.appendChild(createCollapsibleSection(`Hypothesis ${idx + 1}: ${h.title}`, content, true));
+  });
+
+  document.getElementById("result-json").textContent = JSON.stringify(data, null, 2);
+}
+
+async function runDigest() {
+  setToolStatus("Generating digest...");
+  try {
+    const data = await fetchJson("/digest", { method: "POST" });
+    if (data.error) {
+      setToolStatus(`Error: ${data.error.message}`, true);
+      return;
+    }
+    renderDigestResult(data);
+    setToolStatus(`Digest generated for ${data.paper_count} paper(s).`);
+  } catch (err) {
+    setToolStatus(`Failed: ${err.message}`, true);
+  }
+}
+
+function renderDigestResult(data) {
+  const readable = document.getElementById("result-readable");
+  readable.innerHTML = "";
+
+  const header = document.createElement("div");
+  header.className = "explanation-header";
+  header.innerHTML = `<strong>Session Digest</strong> - ${data.paper_count} paper(s): ${(data.paper_titles || []).join(", ")}`;
+  readable.appendChild(header);
+
+  const sections = [
+    { title: "Full Digest", content: data.digest, open: true },
+    { title: "Key Themes", content: (data.key_themes || []).join("\n"), open: true },
+    { title: "Notable Results", content: (data.notable_results || []).join("\n"), open: true },
+    { title: "Open Questions", content: (data.open_questions || []).join("\n"), open: false },
+  ];
+
+  for (const section of sections) {
+    if (section.content && section.content.trim()) {
+      readable.appendChild(createCollapsibleSection(section.title, section.content, section.open));
+    }
+  }
+
+  document.getElementById("result-json").textContent = JSON.stringify(data, null, 2);
+}
+
 function renderResult(data) {
   const readable = document.getElementById("result-readable");
   const pre = document.getElementById("result-json");
@@ -127,6 +260,16 @@ function renderResult(data) {
 
   if (task === "ask") {
     readable.textContent = payload.answer || "No answer generated.";
+    return;
+  }
+
+  if (task === "gaps") {
+    runGapFinder();
+    return;
+  }
+
+  if (task === "hypotheses") {
+    runHypotheses();
     return;
   }
 
@@ -373,6 +516,20 @@ async function onTaskSubmit(event) {
   }
   if (task === "explain") {
     payload.level = level;
+  }
+
+  if (task === "gaps") {
+    setStatus("task-status", "Running task...");
+    await runGapFinder();
+    setStatus("task-status", "Task completed.");
+    return;
+  }
+
+  if (task === "hypotheses") {
+    setStatus("task-status", "Running task...");
+    await runHypotheses();
+    setStatus("task-status", "Task completed.");
+    return;
   }
 
   setStatus("task-status", "Running task...");
