@@ -6,8 +6,15 @@ Priority: GROQ_API_KEY > GEMINI_API_KEY > OPENROUTER_API_KEY > stub fallback.
 import json
 import logging
 import os
+import time
 
 logger = logging.getLogger(__name__)
+
+_GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
+_GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+_OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "openai/gpt-4o-mini")
+_OPENROUTER_TIMEOUT_SEC = float(os.environ.get("OPENROUTER_TIMEOUT_SEC", "30"))
+_LLM_MAX_RETRIES = int(os.environ.get("LLM_MAX_RETRIES", "1"))
 
 
 class LLMUnavailableError(Exception):
@@ -29,7 +36,7 @@ def _call_groq(
         {"role": "user", "content": prompt},
     ]
     response = client.chat.completions.create(
-        model="llama-3.1-8b-instant",
+        model=_GROQ_MODEL,
         messages=payload_messages,
         max_tokens=max_tokens,
         temperature=temperature,
@@ -64,7 +71,7 @@ def _call_gemini(
 
     genai.configure(api_key=os.environ["GEMINI_API_KEY"])
     model = genai.GenerativeModel(
-        model_name="gemini-1.5-flash",
+        model_name=_GEMINI_MODEL,
         system_instruction=system_instruction if system_instruction else None,
         generation_config={"max_output_tokens": max_tokens, "temperature": temperature},
     )
@@ -93,12 +100,12 @@ def _call_openrouter(
             "X-Title": "PaperMind",
         },
         json={
-            "model": "mistralai/mistral-7b-instruct",
+            "model": _OPENROUTER_MODEL,
             "messages": payload_messages,
             "max_tokens": max_tokens,
             "temperature": temperature,
         },
-        timeout=60.0,
+        timeout=_OPENROUTER_TIMEOUT_SEC,
     )
     response.raise_for_status()
     return response.json()["choices"][0]["message"]["content"]
@@ -125,11 +132,16 @@ def call_llm(
         providers.append(("OpenRouter", _call_openrouter))
 
     for name, fn in providers:
-        try:
-            logger.debug(f"Calling LLM via {name}")
-            return fn(prompt, system, max_tokens, temperature, messages=messages)
-        except Exception as e:
-            logger.warning(f"{name} call failed: {e}. Trying next provider.")
+        for attempt in range(_LLM_MAX_RETRIES + 1):
+            try:
+                logger.debug(f"Calling LLM via {name} (attempt {attempt + 1})")
+                return fn(prompt, system, max_tokens, temperature, messages=messages)
+            except Exception as e:
+                if attempt < _LLM_MAX_RETRIES:
+                    # Small exponential backoff to absorb short-lived throttling bursts.
+                    time.sleep(min(2 ** attempt, 4))
+                    continue
+                logger.warning(f"{name} call failed: {e}. Trying next provider.")
 
     logger.error("No LLM provider succeeded.")
     raise LLMUnavailableError(

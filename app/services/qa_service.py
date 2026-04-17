@@ -92,7 +92,7 @@ def _ask_llm(question: str, context_block: str, rows: list[dict], messages: list
     return call_llm(
         prompt,
         system=_SYSTEM_PROMPT,
-        max_tokens=512,
+        max_tokens=256,
         temperature=0.2,
         messages=messages,
     )
