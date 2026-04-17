@@ -1,0 +1,34 @@
+{
+  "papers": [
+    { "path": "paper1.pdf" },
+    { "path": "paper2.pdf" }
+  ],
+  "questions": [
+    {
+      "id": "q1",
+      "question": "What architecture is used in the proposed model?",
+      "gold_answer": "The paper uses a transformer-based architecture.",
+      "category": "extractive",
+      "paper_files": ["paper1.pdf"],
+      "sections_hint": ["method"]
+    },
+    {
+      "id": "q2",
+      "question": "How does the proposed method compare to baseline models?",
+      "references": [
+        "The proposed method outperforms baselines by a clear margin on benchmark datasets.",
+        "It improves over baseline models across reported evaluation metrics."
+      ],
+      "category": "abstractive",
+      "paper_files": ["paper1.pdf", "paper2.pdf"],
+      "sections_hint": ["results"]
+    },
+    {
+      "id": "q3",
+      "question": "Does the paper report statistically significant improvements?",
+      "gold_answer": "Yes, the paper reports statistically significant improvements.",
+      "category": "yes/no",
+      "paper_files": ["paper2.pdf"]
+    }
+  ]
+}

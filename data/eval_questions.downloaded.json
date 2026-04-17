@@ -1,0 +1,90 @@
+{
+  "papers": [
+    { "path": "attention_is_all_you_need.pdf" },
+    { "path": "bert.pdf" },
+    { "path": "lora.pdf" }
+  ],
+  "questions": [
+    {
+      "id": "q1",
+      "question": "In the Transformer base model, what is the value of d_model?",
+      "gold_answer": "The Transformer base model uses d_model = 512.",
+      "category": "extractive",
+      "paper_files": ["attention_is_all_you_need.pdf"],
+      "sections_hint": ["method"]
+    },
+    {
+      "id": "q2",
+      "question": "How many attention heads are used in the Transformer base model?",
+      "gold_answer": "The Transformer base model uses 8 attention heads.",
+      "category": "extractive",
+      "paper_files": ["attention_is_all_you_need.pdf"],
+      "sections_hint": ["method", "results"]
+    },
+    {
+      "id": "q3",
+      "question": "What fraction of tokens are selected for masking in BERT pre-training?",
+      "gold_answer": "BERT masks 15% of input tokens during pre-training.",
+      "category": "extractive",
+      "paper_files": ["bert.pdf"],
+      "sections_hint": ["method"]
+    },
+    {
+      "id": "q4",
+      "question": "What is one main reason LoRA is parameter-efficient compared with full fine-tuning?",
+      "references": [
+        "LoRA is parameter-efficient because it freezes the pretrained model weights and learns only low-rank adaptation matrices.",
+        "Instead of updating all model parameters, LoRA trains small low-rank matrices while keeping the original weights fixed."
+      ],
+      "category": "abstractive",
+      "paper_files": ["lora.pdf"],
+      "sections_hint": ["method", "intro"]
+    },
+    {
+      "id": "q5",
+      "question": "How does BERT differ from previous unidirectional language models?",
+      "references": [
+        "BERT is deeply bidirectional, conditioning on both left and right context simultaneously, unlike unidirectional language models.",
+        "Unlike left-to-right or right-to-left models, BERT pre-trains bidirectional representations using masked language modeling."
+      ],
+      "category": "abstractive",
+      "paper_files": ["bert.pdf"],
+      "sections_hint": ["intro", "method"]
+    },
+    {
+      "id": "q6",
+      "question": "Why did the Transformer architecture reduce dependence on recurrence?",
+      "references": [
+        "The Transformer uses self-attention to model long-range dependencies in parallel, reducing reliance on recurrent computation.",
+        "By replacing recurrence with attention, the Transformer enables greater parallelization and captures dependencies efficiently."
+      ],
+      "category": "abstractive",
+      "paper_files": ["attention_is_all_you_need.pdf"],
+      "sections_hint": ["intro", "method"]
+    },
+    {
+      "id": "q7",
+      "question": "Does BERT use bidirectional context during pre-training?",
+      "gold_answer": "Yes, BERT uses bidirectional context during pre-training.",
+      "category": "yes/no",
+      "paper_files": ["bert.pdf"],
+      "sections_hint": ["intro", "method"]
+    },
+    {
+      "id": "q8",
+      "question": "Does LoRA introduce additional inference latency after training?",
+      "gold_answer": "No, LoRA does not introduce additional inference latency.",
+      "category": "yes/no",
+      "paper_files": ["lora.pdf"],
+      "sections_hint": ["results", "conclusion"]
+    },
+    {
+      "id": "q9",
+      "question": "Does the Transformer rely on recurrence in its core architecture?",
+      "gold_answer": "No, the Transformer does not rely on recurrence in its core architecture.",
+      "category": "yes/no",
+      "paper_files": ["attention_is_all_you_need.pdf"],
+      "sections_hint": ["intro", "method"]
+    }
+  ]
+}

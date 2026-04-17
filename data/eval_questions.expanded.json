@@ -1,0 +1,271 @@
+{
+  "papers": [
+    { "path": "attention_is_all_you_need.pdf" },
+    { "path": "bert.pdf" },
+    { "path": "lora.pdf" }
+  ],
+  "questions": [
+    {
+      "id": "e1",
+      "question": "What is d_model in the Transformer base model?",
+      "references": [
+        "512",
+        "d_model = 512",
+        "The Transformer base model uses d_model = 512."
+      ],
+      "category": "extractive",
+      "paper_files": ["attention_is_all_you_need.pdf"],
+      "sections_hint": ["method"]
+    },
+    {
+      "id": "e2",
+      "question": "How many attention heads are used in the Transformer base model?",
+      "references": [
+        "8",
+        "8 attention heads",
+        "The Transformer base model uses 8 attention heads."
+      ],
+      "category": "extractive",
+      "paper_files": ["attention_is_all_you_need.pdf"],
+      "sections_hint": ["method"]
+    },
+    {
+      "id": "e3",
+      "question": "How many encoder and decoder layers are used in the base Transformer?",
+      "references": [
+        "6 encoder layers and 6 decoder layers",
+        "6 layers in the encoder and 6 layers in the decoder",
+        "The base Transformer uses 6 encoder layers and 6 decoder layers."
+      ],
+      "category": "extractive",
+      "paper_files": ["attention_is_all_you_need.pdf"],
+      "sections_hint": ["method"]
+    },
+    {
+      "id": "e4",
+      "question": "What value is used for label smoothing epsilon in Transformer training?",
+      "references": [
+        "0.1",
+        "epsilon = 0.1",
+        "Transformer training uses label smoothing with epsilon = 0.1."
+      ],
+      "category": "extractive",
+      "paper_files": ["attention_is_all_you_need.pdf"],
+      "sections_hint": ["method"]
+    },
+    {
+      "id": "e5",
+      "question": "What percentage of tokens are selected for masking in BERT pre-training?",
+      "references": [
+        "15%",
+        "15 percent",
+        "BERT masks 15% of input tokens during pre-training."
+      ],
+      "category": "extractive",
+      "paper_files": ["bert.pdf"],
+      "sections_hint": ["method"]
+    },
+    {
+      "id": "e6",
+      "question": "What are the two BERT pre-training objectives?",
+      "references": [
+        "masked language modeling and next sentence prediction",
+        "MLM and NSP",
+        "BERT uses masked language modeling and next sentence prediction."
+      ],
+      "category": "extractive",
+      "paper_files": ["bert.pdf"],
+      "sections_hint": ["method"]
+    },
+    {
+      "id": "e7",
+      "question": "How many parameters does BERT Large have?",
+      "references": [
+        "340 million",
+        "340 million parameters",
+        "BERT Large has about 340 million parameters."
+      ],
+      "category": "extractive",
+      "paper_files": ["bert.pdf"],
+      "sections_hint": ["method"]
+    },
+    {
+      "id": "e8",
+      "question": "On which benchmark did BERT report an SQuAD v1.1 test F1 of 93.2?",
+      "references": [
+        "SQuAD v1.1",
+        "the SQuAD v1.1 benchmark",
+        "BERT reported a 93.2 test F1 on the SQuAD v1.1 benchmark."
+      ],
+      "category": "extractive",
+      "paper_files": ["bert.pdf"],
+      "sections_hint": ["results"]
+    },
+    {
+      "id": "e9",
+      "question": "What does LoRA keep fixed during adaptation?",
+      "references": [
+        "the pre-trained model weights",
+        "LoRA freezes the pre-trained model weights",
+        "LoRA freezes the pre-trained model weights during adaptation."
+      ],
+      "category": "extractive",
+      "paper_files": ["lora.pdf"],
+      "sections_hint": ["method"]
+    },
+    {
+      "id": "e10",
+      "question": "What kind of trainable parameters does LoRA add?",
+      "references": [
+        "low-rank decomposition matrices",
+        "trainable low-rank matrices",
+        "LoRA adds trainable low-rank decomposition matrices to adaptation layers."
+      ],
+      "category": "extractive",
+      "paper_files": ["lora.pdf"],
+      "sections_hint": ["method"]
+    },
+    {
+      "id": "e11",
+      "question": "Why does the Transformer reduce dependence on recurrence?",
+      "references": [
+        "The Transformer replaces recurrent computation with self-attention, enabling parallel processing and more efficient long-range dependency modeling.",
+        "By relying on attention instead of recurrence, the Transformer improves parallelization while still capturing sequence dependencies."
+      ],
+      "category": "abstractive",
+      "paper_files": ["attention_is_all_you_need.pdf"],
+      "sections_hint": ["intro", "method"]
+    },
+    {
+      "id": "e12",
+      "question": "How do positional encodings help the Transformer?",
+      "references": [
+        "Positional encodings inject order information into token representations so attention-based layers can use sequence position.",
+        "Because self-attention is permutation-invariant, positional encodings provide the model with information about token positions."
+      ],
+      "category": "abstractive",
+      "paper_files": ["attention_is_all_you_need.pdf"],
+      "sections_hint": ["method"]
+    },
+    {
+      "id": "e13",
+      "question": "Why is scaled dot-product attention divided by sqrt(d_k)?",
+      "references": [
+        "The dot products are scaled by sqrt(d_k) to prevent large magnitudes that push softmax into saturated regions and hurt gradients.",
+        "Scaling by sqrt(d_k) stabilizes attention scores and training when key/query dimensionality is large."
+      ],
+      "category": "abstractive",
+      "paper_files": ["attention_is_all_you_need.pdf"],
+      "sections_hint": ["method"]
+    },
+    {
+      "id": "e14",
+      "question": "How does BERT differ from unidirectional language models?",
+      "references": [
+        "BERT learns deeply bidirectional representations by conditioning on both left and right context simultaneously.",
+        "Unlike unidirectional language models, BERT uses masked language modeling to pre-train bidirectional context."
+      ],
+      "category": "abstractive",
+      "paper_files": ["bert.pdf"],
+      "sections_hint": ["intro", "method"]
+    },
+    {
+      "id": "e15",
+      "question": "Why does BERT use masking instead of standard left-to-right language modeling?",
+      "references": [
+        "Masking enables BERT to use bidirectional context during pre-training rather than restricting context to one direction.",
+        "Masked language modeling lets BERT predict masked tokens from both sides, supporting bidirectional representations."
+      ],
+      "category": "abstractive",
+      "paper_files": ["bert.pdf"],
+      "sections_hint": ["method"]
+    },
+    {
+      "id": "e16",
+      "question": "What problem does next sentence prediction address in BERT?",
+      "references": [
+        "Next sentence prediction helps BERT model inter-sentence relationships useful for tasks like question answering and natural language inference.",
+        "NSP trains BERT to understand whether two segments follow each other, improving sentence-pair reasoning."
+      ],
+      "category": "abstractive",
+      "paper_files": ["bert.pdf"],
+      "sections_hint": ["method"]
+    },
+    {
+      "id": "e17",
+      "question": "Why is LoRA considered parameter-efficient compared with full fine-tuning?",
+      "references": [
+        "LoRA is parameter-efficient because it freezes original model weights and learns only small low-rank update matrices.",
+        "Instead of updating all parameters, LoRA trains low-rank adapters, greatly reducing trainable parameter count."
+      ],
+      "category": "abstractive",
+      "paper_files": ["lora.pdf"],
+      "sections_hint": ["intro", "method"]
+    },
+    {
+      "id": "e18",
+      "question": "How does LoRA avoid adding inference latency?",
+      "references": [
+        "LoRA can merge low-rank updates into the base weights at inference, avoiding extra latency.",
+        "Because LoRA updates are low-rank and mergeable, it does not require additional inference-time computation overhead."
+      ],
+      "category": "abstractive",
+      "paper_files": ["lora.pdf"],
+      "sections_hint": ["method", "results"]
+    },
+    {
+      "id": "e19",
+      "question": "What practical benefit does LoRA provide for deployment at scale?",
+      "references": [
+        "LoRA allows many task-specific adapters to share one frozen base model, reducing storage and deployment overhead.",
+        "By training compact low-rank adapters, LoRA makes multi-task adaptation cheaper to store and serve."
+      ],
+      "category": "abstractive",
+      "paper_files": ["lora.pdf"],
+      "sections_hint": ["intro", "conclusion"]
+    },
+    {
+      "id": "e20",
+      "question": "How are BERT and LoRA complementary in modern NLP workflows?",
+      "references": [
+        "BERT provides strong pre-trained bidirectional representations, while LoRA provides a lightweight way to adapt such models to new tasks.",
+        "BERT is a pre-training architecture and LoRA is an adaptation technique, so LoRA can fine-tune BERT-like models efficiently."
+      ],
+      "category": "abstractive",
+      "paper_files": ["bert.pdf", "lora.pdf"],
+      "sections_hint": ["intro", "method", "conclusion"]
+    },
+    {
+      "id": "e21",
+      "question": "Does the Transformer core architecture rely on recurrence?",
+      "gold_answer": "No, the Transformer core architecture does not rely on recurrence.",
+      "category": "yes/no",
+      "paper_files": ["attention_is_all_you_need.pdf"],
+      "sections_hint": ["intro", "method"]
+    },
+    {
+      "id": "e22",
+      "question": "Does BERT pre-training use bidirectional context?",
+      "gold_answer": "Yes, BERT pre-training uses bidirectional context.",
+      "category": "yes/no",
+      "paper_files": ["bert.pdf"],
+      "sections_hint": ["intro", "method"]
+    },
+    {
+      "id": "e23",
+      "question": "Does LoRA fine-tune all original model parameters?",
+      "gold_answer": "No, LoRA does not fine-tune all original model parameters.",
+      "category": "yes/no",
+      "paper_files": ["lora.pdf"],
+      "sections_hint": ["method"]
+    },
+    {
+      "id": "e24",
+      "question": "Does LoRA claim reduced trainable parameters compared with full fine-tuning?",
+      "gold_answer": "Yes, LoRA claims reduced trainable parameters compared with full fine-tuning.",
+      "category": "yes/no",
+      "paper_files": ["lora.pdf"],
+      "sections_hint": ["results", "conclusion"]
+    }
+  ]
+}
