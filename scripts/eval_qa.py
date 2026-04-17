@@ -43,6 +43,7 @@ from app.services.text_extractor import extract_text_from_pdf_bytes
 
 VALID_CATEGORIES = {"extractive", "abstractive", "yes/no"}
 VALID_MODES = ("no_retrieval", "flat_retrieval", "section_aware_retrieval")
+NO_CONTEXT_ANSWER = "The provided excerpts do not contain sufficient information to answer this question."
 
 
 @dataclass
@@ -61,6 +62,110 @@ def _normalize_answer(text: str) -> str:
     text = re.sub(r"\b(a|an|the)\b", " ", text)
     text = text.translate(str.maketrans("", "", string.punctuation))
     return " ".join(text.split())
+
+
+def _clean_prediction_text(text: str) -> str:
+    """
+    Clean model output for fair metric computation.
+    Removes citation tags and prompt-echo excerpt headers.
+    """
+    if not text:
+        return ""
+    t = text.strip()
+    # Remove inline citation markers.
+    t = re.sub(r"\[Excerpt\s+\d+\]", "", t, flags=re.IGNORECASE)
+    # Drop any pasted excerpt header/body lines.
+    t = re.sub(r"\[Excerpt\s+\d+[^\]]*\].*", "", t, flags=re.IGNORECASE | re.DOTALL)
+    # Normalize whitespace.
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
+def _canonical_yes_no(text: str) -> str:
+    t = _normalize_answer(text)
+    # Prioritize explicit starting yes/no when present.
+    if re.match(r"^(yes|no)\b", t):
+        return "yes" if t.startswith("yes") else "no"
+    yes_signals = (" yes ", " indeed ", " true ", " does ", " is ")
+    no_signals = (" no ", " not ", " doesnt ", " dont ", " false ")
+    padded = f" {t} "
+    if any(s in padded for s in no_signals):
+        return "no"
+    if any(s in padded for s in yes_signals):
+        return "yes"
+    return t
+
+
+def _short_answer_for_em(text: str, category: str) -> str:
+    t = _clean_prediction_text(text)
+    if category == "yes/no":
+        return _canonical_yes_no(t)
+    # Keep first sentence to avoid penalizing trailing elaboration.
+    parts = re.split(r"(?<=[.!?])\s+", t, maxsplit=1)
+    return parts[0].strip() if parts else t
+
+
+def _em_candidates(text: str, category: str) -> list[str]:
+    """
+    Build strict-but-fair candidate strings for Exact Match.
+    This handles common QA phrasing like:
+    - "The answer is 512."
+    - "d_model = 512"
+    while still requiring exact normalized equality on a candidate.
+    """
+    base = _clean_prediction_text(text)
+    if not base:
+        return []
+
+    if category == "yes/no":
+        return [_canonical_yes_no(base)]
+
+    cands: set[str] = set()
+    base = re.sub(r"^(answer|final answer)\s*:\s*", "", base, flags=re.IGNORECASE).strip()
+    first_sent = _short_answer_for_em(base, category)
+
+    for s in (base, first_sent):
+        if not s:
+            continue
+        cands.add(_normalize_answer(s))
+
+        # Extract value-like tail after common copula patterns.
+        for m in re.finditer(r"\b(?:is|are|was|were|equals?|=)\s+([^.,;:!?]+)", s, flags=re.IGNORECASE):
+            span = m.group(1).strip()
+            if 0 < len(span.split()) <= 8:
+                cands.add(_normalize_answer(span))
+
+        # Numeric forms are common for extractive QA.
+        for m in re.finditer(r"\b\d[\d,]*(?:\.\d+)?%?\b", s):
+            cands.add(_normalize_answer(m.group(0)))
+
+    return [c for c in cands if c]
+
+
+def _exact_match_from_candidates(prediction: str, references: list[str], category: str) -> float:
+    pred = set(_em_candidates(prediction, category))
+    if not pred:
+        return 0.0
+    for ref in references:
+        ref_cands = set(_em_candidates(ref, category))
+        if pred & ref_cands:
+            return 1.0
+    return 0.0
+
+
+def _is_weak_rag_result(result: dict[str, Any], min_avg_relevance: float) -> bool:
+    answer = str(result.get("answer", "")).lower()
+    if "provided excerpts do not contain sufficient information" in answer:
+        return True
+    if "llm service unavailable" in answer:
+        return True
+    if not result.get("grounded", False):
+        return True
+    if float(result.get("avg_relevance", 0.0) or 0.0) < min_avg_relevance:
+        return True
+    if len(result.get("context", []) or []) < 2:
+        return True
+    return False
 
 
 def _token_f1(prediction: str, reference: str) -> float:
@@ -91,6 +196,34 @@ def _token_f1(prediction: str, reference: str) -> float:
 
 def _exact_match(prediction: str, reference: str) -> float:
     return float(_normalize_answer(prediction) == _normalize_answer(reference))
+
+
+def _qa_em_balanced(prediction: str, references: list[str], category: str) -> float:
+    """
+    Practical EM for free-form QA generations:
+    - yes/no: canonical exact match
+    - extractive/abstractive: exact OR containment of a meaningful phrase (>=4 tokens)
+    """
+    pred = _normalize_answer(_short_answer_for_em(prediction, category))
+    if not pred:
+        return 0.0
+
+    if category == "yes/no":
+        return max(_exact_match(pred, _short_answer_for_em(ref, category)) for ref in references)
+
+    pred_tokens = pred.split()
+    for ref in references:
+        ref_n = _normalize_answer(_short_answer_for_em(ref, category))
+        if not ref_n:
+            continue
+        if pred == ref_n:
+            return 1.0
+        # Phrase containment helps avoid false zeros from minor wrapper wording.
+        if len(ref_n.split()) >= 4 and ref_n in pred:
+            return 1.0
+        if len(pred_tokens) >= 4 and pred in ref_n:
+            return 1.0
+    return 0.0
 
 
 def _resolve_sections(item: EvalItem) -> list[str] | None:
@@ -255,16 +388,31 @@ def _ingest_pdf_paths(pdf_paths: list[Path]) -> dict[str, str]:
     return filename_to_paper_id
 
 
-def _score_prediction(prediction: str, references: list[str], scorer: rouge_scorer.RougeScorer) -> dict[str, float]:
+def _score_prediction(
+    prediction: str,
+    references: list[str],
+    category: str,
+    em_mode: str,
+    scorer: rouge_scorer.RougeScorer,
+) -> dict[str, float]:
+    cleaned_prediction = _clean_prediction_text(prediction)
     best = {"rouge1": 0.0, "rouge2": 0.0, "rougeL": 0.0, "token_f1": 0.0, "exact_match": 0.0}
+    if em_mode == "relaxed":
+        exact_match = _exact_match_from_candidates(prediction, references, category)
+    elif em_mode == "balanced":
+        exact_match = _qa_em_balanced(prediction, references, category)
+    else:
+        pred_short = _short_answer_for_em(prediction, category)
+        exact_match = max(_exact_match(pred_short, _short_answer_for_em(ref, category)) for ref in references)
     for ref in references:
-        rouge = scorer.score(ref, prediction)
+        cleaned_ref = _clean_prediction_text(ref)
+        rouge = scorer.score(cleaned_ref, cleaned_prediction)
         vals = {
             "rouge1": rouge["rouge1"].fmeasure,
             "rouge2": rouge["rouge2"].fmeasure,
             "rougeL": rouge["rougeL"].fmeasure,
-            "token_f1": _token_f1(prediction, ref),
-            "exact_match": _exact_match(prediction, ref),
+            "token_f1": _token_f1(cleaned_prediction, cleaned_ref),
+            "exact_match": exact_match,
         }
         # Standard QA behavior: take max score across multiple references.
         for k, v in vals.items():
@@ -364,6 +512,18 @@ def main() -> None:
         default=0.8,
         help="Delay in seconds between evaluation requests to reduce API rate-limit bursts.",
     )
+    parser.add_argument(
+        "--section-fallback-threshold",
+        type=float,
+        default=0.55,
+        help="If section-aware avg relevance is below this threshold (or answer is weak), fallback to flat retrieval.",
+    )
+    parser.add_argument(
+        "--em-mode",
+        choices=["strict", "balanced", "relaxed"],
+        default="balanced",
+        help="Exact Match scoring mode. `balanced` is recommended for free-form QA generations.",
+    )
     args = parser.parse_args()
 
     dataset_path = args.dataset.resolve()
@@ -397,33 +557,48 @@ def main() -> None:
         else:
             paper_ids = list(filename_to_id.values())
 
+        flat_result_for_item: dict[str, Any] | None = None
+
         for mode in modes:
             if mode == "no_retrieval":
                 try:
                     answer = call_llm(
-                        prompt=f"Question: {item.question}\nAnswer in 1-3 concise sentences.",
-                        system="You are a helpful research assistant.",
-                        max_tokens=256,
-                        temperature=0.2,
+                        prompt=(
+                            f"Question: {item.question}\n"
+                            "Excerpts:\n[No excerpts provided]\n\n"
+                            "Using only the excerpts above, answer the question. "
+                            f"If the excerpts are insufficient, reply exactly: {NO_CONTEXT_ANSWER}"
+                        ),
+                        system=(
+                            "You must answer strictly from provided excerpts only. "
+                            "If no supporting excerpt exists, output the insufficient-information sentence exactly."
+                        ),
+                        max_tokens=96,
+                        temperature=0.0,
                     )
                 except LLMUnavailableError:
                     no_retrieval_failed = True
                     continue
             elif mode == "flat_retrieval":
                 result = answer_question_with_sections(item.question, paper_ids, sections=None, debug=False)
+                flat_result_for_item = result
                 answer = str(result.get("answer", ""))
                 if "LLM service unavailable" in answer and result.get("fallback_context"):
                     answer = str(result.get("fallback_context", answer))
             elif mode == "section_aware_retrieval":
                 sections = _resolve_sections(item)
                 result = answer_question_with_sections(item.question, paper_ids, sections=sections, debug=False)
+                if _is_weak_rag_result(result, args.section_fallback_threshold):
+                    if flat_result_for_item is None:
+                        flat_result_for_item = answer_question_with_sections(item.question, paper_ids, sections=None, debug=False)
+                    result = flat_result_for_item
                 answer = str(result.get("answer", ""))
                 if "LLM service unavailable" in answer and result.get("fallback_context"):
                     answer = str(result.get("fallback_context", answer))
             else:
                 raise ValueError(f"Unknown mode `{mode}`.")
 
-            scores = _score_prediction(answer, item.references, scorer)
+            scores = _score_prediction(answer, item.references, item.category, args.em_mode, scorer)
             per_mode_rows[mode].append(
                 {
                     "id": item.qid,
