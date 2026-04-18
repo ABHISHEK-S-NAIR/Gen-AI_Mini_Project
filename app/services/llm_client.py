@@ -14,6 +14,7 @@ _GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
 _GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 _OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "openai/gpt-4o-mini")
 _OPENROUTER_TIMEOUT_SEC = float(os.environ.get("OPENROUTER_TIMEOUT_SEC", "30"))
+_GROQ_TIMEOUT_SEC = float(os.environ.get("GROQ_TIMEOUT_SEC", "30"))
 _LLM_MAX_RETRIES = int(os.environ.get("LLM_MAX_RETRIES", "1"))
 
 
@@ -30,7 +31,7 @@ def _call_groq(
     messages: list[dict] | None = None,
 ) -> str:
     from groq import Groq
-    client = Groq(api_key=os.environ["GROQ_API_KEY"])
+    client = Groq(api_key=os.environ["GROQ_API_KEY"], timeout=_GROQ_TIMEOUT_SEC)
     payload_messages = messages if messages is not None else [
         {"role": "system", "content": system},
         {"role": "user", "content": prompt},

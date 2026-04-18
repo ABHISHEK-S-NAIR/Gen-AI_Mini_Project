@@ -26,6 +26,62 @@ _SYSTEM_PROMPT = (
 )
 
 
+def _lexical_jaccard(a: str, b: str) -> float:
+    """Fast lexical similarity used for diversity selection."""
+    ta = set(_re.findall(r"[a-z0-9]+", a.lower()))
+    tb = set(_re.findall(r"[a-z0-9]+", b.lower()))
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / len(ta | tb)
+
+
+def _select_diverse_rows(rows: list[dict], k: int, diversity_lambda: float = 0.35) -> list[dict]:
+    """
+    Greedy MMR-like selection:
+    maximize relevance while penalizing near-duplicate chunks.
+    """
+    if not rows or k <= 0:
+        return []
+    candidates = list(rows)
+    selected: list[dict] = []
+
+    # Seed with most relevant row.
+    selected.append(candidates.pop(0))
+    while candidates and len(selected) < k:
+        best_idx = 0
+        best_score = float("-inf")
+        for i, cand in enumerate(candidates):
+            relevance = float(cand.get("score", 0.0))
+            redundancy = max(
+                _lexical_jaccard(str(cand.get("text", "")), str(s.get("text", "")))
+                for s in selected
+            )
+            mmr = relevance - diversity_lambda * redundancy
+            if mmr > best_score:
+                best_score = mmr
+                best_idx = i
+        selected.append(candidates.pop(best_idx))
+    return selected
+
+
+def _is_abstractive_question(question: str) -> bool:
+    q = question.lower()
+    markers = (
+        "why",
+        "how",
+        "compare",
+        "difference",
+        "impact",
+        "reason",
+        "benefit",
+        "tradeoff",
+        "advantage",
+        "disadvantage",
+        "complementary",
+    )
+    return any(m in q for m in markers)
+
+
 def _build_context_block(rows: list[dict]) -> str:
     """
     Build formatted context from retrieved chunks.
@@ -44,22 +100,26 @@ def _build_context_block(rows: list[dict]) -> str:
     # Build formatted context
     parts = []
     excerpt_num = 1
+    max_excerpt_chars = 520
     for paper_id, chunks in grouped.items():
         paper = state.papers.get(str(paper_id))
         paper_name = paper.filename if paper else "unknown"
         
         for row in chunks:
             score = row.get("score", 0.0)
+            chunk_text = str(row.get("text", ""))
+            if len(chunk_text) > max_excerpt_chars:
+                chunk_text = chunk_text[:max_excerpt_chars].rsplit(" ", 1)[0] + " ..."
             parts.append(
                 f"[Excerpt {excerpt_num} | Paper: '{paper_name}' | "
-                f"Section: {row['section']} | Relevance: {score:.2f}]\n{row['text']}"
+                f"Section: {row['section']} | Relevance: {score:.2f}]\n{chunk_text}"
             )
             excerpt_num += 1
     
     return "\n\n".join(parts)
 
 
-def _build_prompt(question: str, context_block: str, rows: list[dict]) -> str:
+def _build_prompt(question: str, context_block: str, rows: list[dict], abstractive: bool = False) -> str:
     paper_count = len({row["paper_id"] for row in rows})
 
     if paper_count > 1:
@@ -72,27 +132,40 @@ def _build_prompt(question: str, context_block: str, rows: list[dict]) -> str:
     else:
         synthesis_instruction = ""
 
+    answer_style = (
+        "Provide a synthesis answer in 2-4 sentences that explains relationships "
+        "(cause/effect, contrasts, rationale) across excerpts."
+        if abstractive
+        else "Answer concisely with specific evidence from the excerpts."
+    )
+
     return (
         f"Using only the excerpts below, answer the following question.\n"
         f"{synthesis_instruction}\n\n"
         f"Question: {question}\n\n"
         f"Excerpts:\n{context_block}\n\n"
-        f"Answer concisely with specific evidence from the excerpts. "
+        f"{answer_style} "
         f"If the excerpts do not contain enough information, say: "
         f"'The provided excerpts do not contain sufficient information to answer this question.'"
     )
 
 
-def _ask_llm(question: str, context_block: str, rows: list[dict], messages: list[dict] | None = None) -> str:
+def _ask_llm(
+    question: str,
+    context_block: str,
+    rows: list[dict],
+    messages: list[dict] | None = None,
+    abstractive: bool = False,
+) -> str:
     """
     Ask LLM to answer question based on context.
     Raises LLMUnavailableError if all providers fail.
     """
-    prompt = _build_prompt(question, context_block, rows)
+    prompt = _build_prompt(question, context_block, rows, abstractive=abstractive)
     return call_llm(
         prompt,
         system=_SYSTEM_PROMPT,
-        max_tokens=256,
+        max_tokens=320 if abstractive else 256,
         temperature=0.2,
         messages=messages,
     )
@@ -139,10 +212,15 @@ def answer_question_with_sections(
     # Create cache key from question + papers + sections
     cache_key = f"qa:{question}:{sorted(paper_ids)}:{sorted(sections) if sections else 'all'}:{conversation_id or 'none'}"
 
+    is_abstractive = _is_abstractive_question(question)
+    relevance_threshold = RELEVANCE_THRESHOLD - 0.08 if is_abstractive else RELEVANCE_THRESHOLD
+    retrieval_k = settings.top_k_chunks * 3 if is_abstractive else settings.top_k_chunks * 2
+
     debug_payload = {
         "all_candidates": [],
-        "threshold_used": RELEVANCE_THRESHOLD,
+        "threshold_used": relevance_threshold,
         "candidates_above_threshold": 0,
+        "abstractive_mode": is_abstractive,
     }
     
     # Check cache first
@@ -155,7 +233,7 @@ def answer_question_with_sections(
     
     # Retrieve more candidates than needed to allow filtering
     candidate_rows = state.vdb.search(
-        query_vec, settings.top_k_chunks * 2, paper_ids=paper_ids, sections=sections
+        query_vec, retrieval_k, paper_ids=paper_ids, sections=sections
     )
 
     if debug:
@@ -185,7 +263,7 @@ def answer_question_with_sections(
         return result
     
     # Filter by relevance threshold
-    relevant_rows = [r for r in candidate_rows if r.get("score", 0) >= RELEVANCE_THRESHOLD]
+    relevant_rows = [r for r in candidate_rows if r.get("score", 0) >= relevance_threshold]
 
     if debug:
         debug_payload["candidates_above_threshold"] = len(relevant_rows)
@@ -197,7 +275,7 @@ def answer_question_with_sections(
             "question": question,
             "answer": (
                 f"No sufficiently relevant context found in the selected papers. "
-                f"Best match score was {best_score:.2f} (threshold: {RELEVANCE_THRESHOLD}). "
+                f"Best match score was {best_score:.2f} (threshold: {relevance_threshold:.2f}). "
                 f"Try rephrasing your question or selecting different papers."
             ),
             "context": [],
@@ -212,10 +290,15 @@ def answer_question_with_sections(
         return result
     
     # Take top k from relevant chunks
-    rows = relevant_rows[:settings.top_k_chunks]
+    final_k = settings.top_k_chunks + 2 if is_abstractive else settings.top_k_chunks
+    if is_abstractive:
+        # Use diverse evidence for synthesis-style answers.
+        rows = _select_diverse_rows(relevant_rows[: max(final_k * 3, final_k)], final_k)
+    else:
+        rows = relevant_rows[:final_k]
     
     context_block = _build_context_block(rows)
-    prompt = _build_prompt(question, context_block, rows)
+    prompt = _build_prompt(question, context_block, rows, abstractive=is_abstractive)
 
     messages = None
     if conversation_id:
@@ -228,7 +311,7 @@ def answer_question_with_sections(
     
     # Try to get LLM answer, with fallback on failure
     try:
-        answer = _ask_llm(question, context_block, rows, messages=messages)
+        answer = _ask_llm(question, context_block, rows, messages=messages, abstractive=is_abstractive)
     except LLMUnavailableError as e:
         logger.error(f"LLM unavailable: {e}")
         # Return error with fallback to extracted relevant sentences
