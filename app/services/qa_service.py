@@ -82,6 +82,68 @@ def _is_abstractive_question(question: str) -> bool:
     return any(m in q for m in markers)
 
 
+def _route_sections_for_question(question: str) -> list[str] | None:
+    """Infer relevant paper sections from question intent."""
+    q = question.lower()
+
+    method_markers = (
+        "how",
+        "method",
+        "approach",
+        "architecture",
+        "model",
+        "algorithm",
+        "technique",
+        "implement",
+        "design",
+        "train",
+    )
+    results_markers = (
+        "result",
+        "performance",
+        "accuracy",
+        "score",
+        "bleu",
+        "rouge",
+        "f1",
+        "benchmark",
+        "outperform",
+        "beat",
+        "achieve",
+        "metric",
+    )
+    background_markers = (
+        "why",
+        "problem",
+        "motivation",
+        "background",
+        "prior",
+        "previous",
+        "related",
+        "challenge",
+        "limitation",
+    )
+    contribution_markers = (
+        "contribution",
+        "novel",
+        "new",
+        "propose",
+        "introduce",
+        "different",
+        "improve over",
+    )
+
+    if any(marker in q for marker in method_markers):
+        return ["method", "intro"]
+    if any(marker in q for marker in results_markers):
+        return ["results", "conclusion"]
+    if any(marker in q for marker in background_markers):
+        return ["intro", "abstract"]
+    if any(marker in q for marker in contribution_markers):
+        return ["abstract", "intro", "conclusion"]
+    return None
+
+
 def _build_context_block(rows: list[dict]) -> str:
     """
     Build formatted context from retrieved chunks.
@@ -216,11 +278,19 @@ def answer_question_with_sections(
     relevance_threshold = RELEVANCE_THRESHOLD - 0.08 if is_abstractive else RELEVANCE_THRESHOLD
     retrieval_k = settings.top_k_chunks * 3 if is_abstractive else settings.top_k_chunks * 2
 
+    routed_sections = None
+    search_sections = sections
+    if sections is None:
+        routed_sections = _route_sections_for_question(question)
+        search_sections = routed_sections
+
     debug_payload = {
         "all_candidates": [],
         "threshold_used": relevance_threshold,
         "candidates_above_threshold": 0,
         "abstractive_mode": is_abstractive,
+        "routed_sections": routed_sections,
+        "fallback_to_all_sections": False,
     }
     
     # Check cache first
@@ -233,8 +303,19 @@ def answer_question_with_sections(
     
     # Retrieve more candidates than needed to allow filtering
     candidate_rows = state.vdb.search(
-        query_vec, retrieval_k, paper_ids=paper_ids, sections=sections
+        query_vec, retrieval_k, paper_ids=paper_ids, sections=search_sections
     )
+
+    if sections is None and routed_sections is not None:
+        routed_relevant_count = sum(
+            1 for row in candidate_rows if row.get("score", 0) >= relevance_threshold
+        )
+        if routed_relevant_count < settings.top_k_chunks:
+            candidate_rows = state.vdb.search(
+                query_vec, retrieval_k, paper_ids=paper_ids, sections=None
+            )
+            if debug:
+                debug_payload["fallback_to_all_sections"] = True
 
     if debug:
         debug_payload["all_candidates"] = [
