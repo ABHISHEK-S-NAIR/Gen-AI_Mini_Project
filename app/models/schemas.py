@@ -12,6 +12,8 @@ class IngestedPaper(BaseModel):
     paper_id: str
     filename: str
     raw_text: str
+    tables: list[dict[str, object]] = Field(default_factory=list)
+    figures: list[dict[str, object]] = Field(default_factory=list)
 
 
 class Chunk(BaseModel):

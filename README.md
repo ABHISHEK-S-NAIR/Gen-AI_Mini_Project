@@ -24,7 +24,7 @@ PaperMind ingests research PDFs, chunks and embeds them using SciBERT, stores th
 
 | Category | Capability |
 |---|---|
-| **Ingestion** | Multi-PDF upload, PyPDF2 text extraction, overlapping token chunking |
+| **Ingestion** | Multi-PDF upload, pdfplumber text + table extraction (PyPDF2 fallback), overlapping token chunking |
 | **Embeddings** | SciBERT (`allenai/scibert_scivocab_uncased`, 768-dim) with MiniLM fallback; GPU auto-detection (CUDA / MPS / CPU) |
 | **Retrieval** | ChromaDB vector store, cosine similarity, section-aware filtering, MMR diversity re-ranking |
 | **Reranking** | Cross-encoder reranking (default: `cross-encoder/ms-marco-MiniLM-L-6-v2`) for better relevance |
@@ -46,7 +46,7 @@ PaperMind ingests research PDFs, chunks and embeds them using SciBERT, stores th
 PDF Upload
     │
     ▼
-Text Extraction (PyPDF2)
+Text Extraction (pdfplumber + PyPDF2 fallback)
     │
     ▼
 Section Detection (regex headings + LLM fallback)
@@ -453,7 +453,7 @@ python scripts/eval_qa.py \
 - **Local model support** — add an Ollama provider so the system runs fully offline.
 
 ### Analysis Quality
-- **Figure and table extraction** — use `pdfplumber` or a vision model to extract data from charts and tables, not just raw text.
+- **Figure extraction** — extend beyond pdfplumber with a vision model to extract data from charts and figures.
 - **Reference resolution** — build a bibliography parser to resolve `[12]` and `(Smith et al., 2020)` to structured entries with DOIs.
 - **Claim verification** — cross-check extracted metric claims against results tables for consistency.
 

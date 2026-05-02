@@ -7,3 +7,6 @@ eval/results.json
 eval/__pycache__
 data/chroma/
 paper/
+cache/qa
+app/core/__pycache__
+app/models/__pycache__

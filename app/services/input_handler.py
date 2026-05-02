@@ -9,7 +9,7 @@ from app.models.schemas import IngestedPaper
 from app.services.chunker import chunk_sections
 from app.services.embedding_engine import embed_texts, get_embedding_dim
 from app.services.section_detector import detect_sections
-from app.services.text_extractor import extract_text_from_pdf_bytes
+from app.services.text_extractor import build_tables_text, extract_pdf_content
 
 
 async def ingest_files(files: list[UploadFile]) -> dict[str, object]:
@@ -24,16 +24,32 @@ async def ingest_files(files: list[UploadFile]) -> dict[str, object]:
             return {"error": ERRORS["E001"].__dict__}
 
         pdf_bytes = await uploaded.read()
-        raw_text = extract_text_from_pdf_bytes(pdf_bytes)
-        if not raw_text:
+        raw_text, tables, figures = extract_pdf_content(pdf_bytes)
+        if not raw_text and not tables and not figures:
             return {"error": ERRORS["E001"].__dict__}
 
         paper_id = str(uuid.uuid4())
-        paper = IngestedPaper(paper_id=paper_id, filename=uploaded.filename or "unknown.pdf", raw_text=raw_text)
+        paper = IngestedPaper(
+            paper_id=paper_id,
+            filename=uploaded.filename or "unknown.pdf",
+            raw_text=raw_text,
+            tables=tables,
+            figures=figures,
+        )
         state.add_paper(paper_id, paper)
         ingested.append(paper)
 
         sections = detect_sections(raw_text)
+        tables_text = build_tables_text(tables)
+        if tables_text:
+            if sections.get("results", "").strip():
+                sections["results"] = sections["results"].rstrip() + "\n\n" + tables_text
+            elif sections.get("method", "").strip():
+                sections["method"] = sections["method"].rstrip() + "\n\n" + tables_text
+            elif sections.get("intro", "").strip():
+                sections["intro"] = sections["intro"].rstrip() + "\n\n" + tables_text
+            else:
+                sections["results"] = tables_text
         if not any(sections[s].strip() for s in ("abstract", "intro", "method", "results", "conclusion")):
             return {"error": ERRORS["E002"].__dict__}
         state.add_sections(paper_id, sections)

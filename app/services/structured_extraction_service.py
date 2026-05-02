@@ -406,6 +406,14 @@ def extract_structured_data(paper_id: str) -> dict[str, str]:
     method = sections.get("method", "")
     results = sections.get("results", "")
     conclusion = sections.get("conclusion", "")
+    tables_text = ""
+    if paper and getattr(paper, "tables", None):
+        table_blocks = []
+        for table in paper.tables:
+            text = table.get("text") if isinstance(table, dict) else ""
+            if text:
+                table_blocks.append(text)
+        tables_text = "\n".join(table_blocks)
 
     if not any([abstract, intro, method, results, conclusion]):
         fallback = " ".join(c.text for c in state.chunks.get(paper_id, [])[:8])
@@ -437,7 +445,7 @@ def extract_structured_data(paper_id: str) -> dict[str, str]:
     if not limitation_src:
         limitation_src = "limited evaluation details"
 
-    full_text = " ".join([abstract, intro, method, results, conclusion])
+    full_text = " ".join([abstract, intro, method, results, conclusion, tables_text])
     core_technique = _infer_core_technique(full_text)
     metrics = _find_metrics(full_text)
     datasets = _find_datasets(full_text)
