@@ -2,6 +2,7 @@ from pathlib import Path
 
 import chromadb
 from chromadb.config import Settings as ChromaSettings
+from chromadb.errors import NotFoundError
 
 
 class ChromaVectorDB:
@@ -13,14 +14,30 @@ class ChromaVectorDB:
         base_dir = Path(persist_dir)
         base_dir.mkdir(parents=True, exist_ok=True)
 
+        self._collection_name = collection_name
+        self._collection_metadata = {"hnsw:space": "cosine"}
+
         self._client = chromadb.PersistentClient(
             path=str(base_dir),
             settings=ChromaSettings(anonymized_telemetry=False),
         )
         self._collection = self._client.get_or_create_collection(
-            name=collection_name,
-            metadata={"hnsw:space": "cosine"},
+            name=self._collection_name,
+            metadata=self._collection_metadata,
         )
+
+    def _get_collection(self) -> chromadb.Collection:
+        try:
+            self._collection = self._client.get_or_create_collection(
+                name=self._collection_name,
+                metadata=self._collection_metadata,
+            )
+        except NotFoundError:
+            self._collection = self._client.get_or_create_collection(
+                name=self._collection_name,
+                metadata=self._collection_metadata,
+            )
+        return self._collection
 
     def upsert(self, rows: list[dict[str, object]]) -> None:
         if not rows:
@@ -43,7 +60,8 @@ class ChromaVectorDB:
             )
             documents.append(str(row["text"]))
 
-        self._collection.upsert(
+        collection = self._get_collection()
+        collection.upsert(
             ids=ids,
             embeddings=embeddings,
             metadatas=metadatas,
@@ -68,7 +86,8 @@ class ChromaVectorDB:
 
         where_clause = where if where else None
 
-        results = self._collection.query(
+        collection = self._get_collection()
+        results = collection.query(
             query_embeddings=[query_vector],
             n_results=k,
             where=where_clause,
@@ -100,6 +119,11 @@ class ChromaVectorDB:
         return rows
 
     def reset(self) -> None:
-        name = self._collection.name
-        self._client.delete_collection(name)
-        self._collection = self._client.get_or_create_collection(name=name)
+        try:
+            self._client.delete_collection(self._collection_name)
+        except NotFoundError:
+            pass
+        self._collection = self._client.get_or_create_collection(
+            name=self._collection_name,
+            metadata=self._collection_metadata,
+        )
