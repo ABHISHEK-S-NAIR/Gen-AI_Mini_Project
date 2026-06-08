@@ -2,6 +2,12 @@ import re
 
 from app.core.errors import ERRORS
 from app.core.state import state
+from app.services.bibliography_parser import (
+    enrich_missing_doi,
+    parse_entry,
+    resolve_citation,
+    split_entries,
+)
 
 
 # Comprehensive citation patterns covering common academic formats
@@ -78,6 +84,10 @@ EMAIL_PATTERN = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"
 URL_PATTERN = re.compile(r"https?://\S+", re.IGNORECASE)
 ARXIV_PATTERN = re.compile(r"arXiv:\S+", re.IGNORECASE)
 SECTION_HEADING_INLINE_PATTERN = re.compile(r"\s\d+(?:\.\d+)*\s+[A-Z][A-Za-z-]{2,}")
+REFERENCES_HEADING_PATTERN = re.compile(
+    r"^(references|bibliography|reference\s+list|works\s+cited)\b",
+    re.IGNORECASE,
+)
 
 
 def _default_canonical_key(raw_text: str) -> str:
@@ -125,6 +135,21 @@ def _compact_sentence(sentence: str, max_len: int = 420) -> str:
     if len(s) <= max_len:
         return s
     return s[:max_len].rstrip() + "..."
+
+
+def _extract_references_block(raw_text: str) -> str:
+    if not raw_text:
+        return ""
+    lines = [line.strip() for line in raw_text.splitlines()]
+    start_idx = None
+    for idx, line in enumerate(lines):
+        if line and REFERENCES_HEADING_PATTERN.match(line):
+            start_idx = idx + 1
+            break
+    if start_idx is None:
+        return ""
+    refs = [line for line in lines[start_idx:] if line]
+    return "\n".join(refs).strip()
 
 
 def _split_sentences(text: str) -> list[str]:
@@ -214,10 +239,28 @@ def analyse_citations(paper_id: str) -> dict[str, object]:
         return {"citations": [], "error": ERRORS["E007"].__dict__}
 
     text = _normalize_text(paper.raw_text)
+    sections = state.sections.get(paper_id, {})
+    references_text = sections.get("references", "") if isinstance(sections, dict) else ""
+    parsed_entries: list[dict] = []
+    if references_text:
+        entries = split_entries(references_text)
+        parsed_entries = [parse_entry(entry) for entry in entries if entry.strip()]
+    else:
+        fallback_refs = _extract_references_block(paper.raw_text)
+        if fallback_refs:
+            entries = split_entries(fallback_refs)
+            parsed_entries = [parse_entry(entry) for entry in entries if entry.strip()]
+
     citations: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
 
-    for sentence in _split_sentences(text):
+    text_without_refs = text
+    if references_text:
+        normalized_refs = _normalize_text(references_text)
+        if normalized_refs and normalized_refs in text:
+            text_without_refs = text.replace(normalized_refs, " ")
+
+    for sentence in _split_sentences(text_without_refs):
         raw_cites = _extract_citation_strings(sentence)
         if not raw_cites:
             continue
@@ -229,12 +272,16 @@ def analyse_citations(paper_id: str) -> dict[str, object]:
             if key in seen:
                 continue
             seen.add(key)
+            resolved = resolve_citation(raw_cite, parsed_entries) if parsed_entries else None
+            if isinstance(resolved, dict) and not resolved.get("doi"):
+                resolved = enrich_missing_doi(resolved)
             citations.append(
                 {
                     "raw_text": raw_cite,
                     "context": context,
                     "type": citation_type,
                     "insight": _build_insight(raw_cite, citation_type),
+                    "resolved": resolved,
                 }
             )
 

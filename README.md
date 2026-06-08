@@ -453,7 +453,6 @@ python scripts/eval_qa.py \
 - **Local model support** — add an Ollama provider so the system runs fully offline.
 
 ### Analysis Quality
-- ✅ **Figure extraction** — vision-based extraction using GPT-4o/Gemini/Groq to extract structured data from charts and figures. [See docs](docs/FIGURE_EXTRACTION.md)
 - **Reference resolution** — build a bibliography parser to resolve `[12]` and `(Smith et al., 2020)` to structured entries with DOIs.
 - **Claim verification** — cross-check extracted metric claims against results tables for consistency.
 

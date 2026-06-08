@@ -29,8 +29,66 @@ function createCollapsibleSection(title, content, defaultOpen = true) {
   
   details.appendChild(summary);
   details.appendChild(contentDiv);
-  
+
   return details;
+}
+
+function formatResolvedEntry(entry) {
+  if (!entry) {
+    return "";
+  }
+  if (Array.isArray(entry)) {
+    return entry
+      .map((item, idx) => {
+        const formatted = formatResolvedEntry(item);
+        return formatted ? `${idx + 1}. ${formatted}` : "";
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+  if (typeof entry !== "object") {
+    return "";
+  }
+  const title = entry.title || "";
+  const authors = Array.isArray(entry.authors) ? entry.authors.join(", ") : "";
+  const year = entry.year || "";
+  const venue = entry.venue || "";
+  const doi = entry.doi || "";
+  const arxiv = entry.arxiv || "";
+  const raw = entry.raw || "";
+
+  const lines = [];
+  if (title) lines.push(`Title: ${title}`);
+  if (authors) lines.push(`Authors: ${authors}`);
+  if (year || venue) lines.push(`Year/Venue: ${[year, venue].filter(Boolean).join(" - ")}`);
+  if (doi) lines.push(`DOI: ${doi}`);
+  if (arxiv) lines.push(`arXiv: ${arxiv}`);
+  if (!lines.length && raw) lines.push(`Raw: ${raw}`);
+  return lines.join("\n");
+}
+
+function buildResolvedIndex(citations) {
+  const entries = [];
+  const seen = new Set();
+  citations.forEach((c) => {
+    const resolved = c?.resolved;
+    const resolvedList = Array.isArray(resolved) ? resolved : resolved ? [resolved] : [];
+    if (!resolvedList.length) {
+      return;
+    }
+    resolvedList.forEach((item) => {
+      if (!item || typeof item !== "object") {
+        return;
+      }
+      const key = item.key || item.doi || item.arxiv || item.title || item.raw;
+      if (!key || seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      entries.push(item);
+    });
+  });
+  return entries;
 }
 
 function updateTaskInputs() {
@@ -356,9 +414,25 @@ function renderResult(data) {
 
         const lines = citations
           .slice(0, 8)
-          .map((c, i) => `${i + 1}. ${c.raw_text}\nType: ${c.type}\n${c.context}\nInsight: ${c.insight}`)
+          .map((c, i) => {
+            const resolved = formatResolvedEntry(c.resolved);
+            const resolvedBlock = resolved ? `\nResolved:\n${resolved}` : "";
+            return `${i + 1}. ${c.raw_text}\nType: ${c.type}\n${c.context}\nInsight: ${c.insight}${resolvedBlock}`;
+          })
           .join("\n\n");
-        return `${title}\n\n${lines}`;
+
+        const resolvedIndex = buildResolvedIndex(citations);
+        const resolvedText = resolvedIndex.length
+          ? resolvedIndex
+              .map((entry, idx) => `${idx + 1}. ${formatResolvedEntry(entry)}`)
+              .filter(Boolean)
+              .join("\n\n")
+          : "";
+        const resolvedSection = resolvedText
+          ? `\n\nResolved References\n\n${resolvedText}`
+          : "";
+
+        return `${title}\n\n${lines}${resolvedSection}`;
       });
 
       readable.textContent = blocks.join("\n\n------------------------------\n\n");
@@ -372,10 +446,27 @@ function renderResult(data) {
       return;
     }
 
-    readable.textContent = citations
+    const lines = citations
       .slice(0, 10)
-      .map((c, i) => `${i + 1}. ${c.raw_text}\nType: ${c.type}\n${c.context}\nInsight: ${c.insight}`)
+      .map((c, i) => {
+        const resolved = formatResolvedEntry(c.resolved);
+        const resolvedBlock = resolved ? `\nResolved:\n${resolved}` : "";
+        return `${i + 1}. ${c.raw_text}\nType: ${c.type}\n${c.context}\nInsight: ${c.insight}${resolvedBlock}`;
+      })
       .join("\n\n");
+
+    const resolvedIndex = buildResolvedIndex(citations);
+    const resolvedText = resolvedIndex.length
+      ? resolvedIndex
+          .map((entry, idx) => `${idx + 1}. ${formatResolvedEntry(entry)}`)
+          .filter(Boolean)
+          .join("\n\n")
+      : "";
+    const resolvedSection = resolvedText
+      ? `\n\nResolved References\n\n${resolvedText}`
+      : "";
+
+    readable.textContent = `${lines}${resolvedSection}`;
     return;
   }
 

@@ -13,6 +13,8 @@ def test_detect_sections_with_synonyms() -> None:
     Result details.
     Conclusion
     Final notes.
+    References
+    [1] Example reference.
     """
 
     sections = detect_sections(raw)
@@ -21,3 +23,4 @@ def test_detect_sections_with_synonyms() -> None:
     assert sections["method"]
     assert sections["results"]
     assert sections["conclusion"]
+    assert sections["references"]

@@ -3,7 +3,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
-SectionName = Literal["abstract", "intro", "method", "results", "conclusion", "other"]
+SectionName = Literal["abstract", "intro", "method", "results", "conclusion", "references", "other"]
 TaskType = Literal["analyse", "review", "citations", "ask", "explain"]
 ExplainLevel = Literal["beginner", "intermediate", "expert", "visual", "training", "pipeline", "components"]
 

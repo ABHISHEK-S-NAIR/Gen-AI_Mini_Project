@@ -84,6 +84,15 @@ class ChromaVectorDB:
         if sections:
             where["section"] = {"$in": sections}
 
+        # ChromaDB 0.6+ requires $and wrapper when filtering on multiple keys
+        if len(where) > 1:
+            clauses = []
+            if paper_ids:
+                clauses.append({"paper_id": {"$in": paper_ids}})
+            if sections:
+                clauses.append({"section": {"$in": sections}})
+            where = {"$and": clauses}
+
         where_clause = where if where else None
 
         collection = self._get_collection()

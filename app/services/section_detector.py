@@ -62,6 +62,12 @@ _SECTION_PATTERNS: dict[SectionName, list[str]] = {
         r"limitations?\s+and\s+future.*",
         r"conclusion\s+and\s+future.*",
     ],
+    "references": [
+        r"references",
+        r"bibliography",
+        r"reference\s+list",
+        r"works\s+cited",
+    ],
 }
 
 # Matches the optional prefix before the heading content:
@@ -119,7 +125,7 @@ def _llm_detect_sections(raw_text: str) -> dict[SectionName, str] | None:
             "- the index into the text where that section's content starts "
             "(just after the heading line).\n\n"
             "Return ONLY a JSON object with these exact keys (omit keys you cannot find):\n"
-            '  "abstract", "intro", "method", "results", "conclusion"\n\n'
+            '  "abstract", "intro", "method", "results", "conclusion", "references"\n\n'
             "Values must be integers (character offsets). "
             "Return ONLY the JSON object. No markdown fences. No explanation.\n\n"
             "Example output: {\"abstract\": 142, \"intro\": 891, \"method\": 2103}\n\n"
@@ -136,7 +142,7 @@ def _llm_detect_sections(raw_text: str) -> dict[SectionName, str] | None:
         if not isinstance(offsets, dict) or not offsets:
             return None
 
-        valid_keys = {"abstract", "intro", "method", "results", "conclusion"}
+        valid_keys = {"abstract", "intro", "method", "results", "conclusion", "references"}
         clean: dict[str, int] = {}
         for k, v in offsets.items():
             if k in valid_keys:
@@ -158,6 +164,7 @@ def _llm_detect_sections(raw_text: str) -> dict[SectionName, str] | None:
             "method": "",
             "results": "",
             "conclusion": "",
+            "references": "",
             "other": "",
         }
 
@@ -248,6 +255,7 @@ def detect_sections(raw_text: str) -> dict[SectionName, str]:
             "method": "",
             "results": "",
             "conclusion": "",
+            "references": "",
             "other": "\n".join(lines),
         }
 
@@ -258,6 +266,7 @@ def detect_sections(raw_text: str) -> dict[SectionName, str]:
         "method": "",
         "results": "",
         "conclusion": "",
+        "references": "",
         "other": "",
     }
 
