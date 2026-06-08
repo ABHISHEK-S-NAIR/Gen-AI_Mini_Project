@@ -11,6 +11,13 @@ class Settings(BaseModel):
     cross_encoder_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     rerank_top_n: int = 12
     hybrid_alpha: float = 0.7
+    enable_vision_extraction: bool = (
+        True  # Enable vision-based figure extraction (set to False to disable)
+    )
+    max_figures_per_paper: int = 10  # Maximum number of figures to analyze per paper
+    llm_provider: str = (
+        "groq"  # Vision model provider (groq, openai, gemini) - Groq is free and fast
+    )
 
 
 settings = Settings()
